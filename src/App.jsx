@@ -360,7 +360,7 @@ function ResultCardVisual({ item, result, onRetry, retrying }) {
   const [open, setOpen] = useState(true);
   const st=result?.status||"unconfirmed";
   const cfg=STATUS[st];
-  const sourceUrls=result?.source_url?result.source_url.split(",").map(u=>u.trim()).filter(u=>u.startsWith("http")):[];
+  const sourceUrls=result?.source_url&&typeof result.source_url==="string"?result.source_url.split(",").map(u=>u.trim()).filter(u=>u.startsWith("http")):[];
   const isFinance=["pl_summary","growth_profit","financial_health"].includes(item.id);
   const hasQuote=result?.quote;
 
@@ -432,7 +432,7 @@ function ResultCardText({ item, result, onRetry, retrying }) {
   const [open, setOpen] = useState(true);
   const st=result?.status||"unconfirmed";
   const cfg=STATUS[st];
-  const sourceUrls=result?.source_url?result.source_url.split(",").map(u=>u.trim()).filter(u=>u.startsWith("http")):[];
+  const sourceUrls=result?.source_url&&typeof result.source_url==="string"?result.source_url.split(",").map(u=>u.trim()).filter(u=>u.startsWith("http")):[];
   const isFinance=["pl_summary","growth_profit","financial_health"].includes(item.id);
 
   return (
