@@ -23,9 +23,7 @@ module.exports = async function handler(req, res) {
     if (data.content) {
       data.content = data.content.map(block => {
         if (block.type === 'text' && block.text) {
-          block.text = block.text
-            .replace(/]*>/g, '')
-            .replace(/<\/antml:cite>/g, '');
+          block.text = block.text.replace(/<\/?cite[^>]*>/gi, '');
         }
         return block;
       });
