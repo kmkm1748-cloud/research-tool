@@ -96,7 +96,7 @@ const PROMPTS = {
 };
 
 // 環境変数からAPIキーを取得（Viteの場合はVITE_プレフィックス必須）
-const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY || "";
+const API_KEY = true;
 
 async function callClaude(system, user) {
   const res = await fetch("/api/chat", {
@@ -191,7 +191,7 @@ export default function App() {
   const [progress, setProgress] = useState({ done: 0, total: 0, current: "" });
   const [results, setResults] = useState({});
   const [activeCategory, setActiveCategory] = useState(null);
-  const [apiKeyMissing, setApiKeyMissing] = useState(!API_KEY);
+  const [apiKeyMissing, setApiKeyMissing] = useState(false);
   const abortRef = useRef(false);
 
   const toggle = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
