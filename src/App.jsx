@@ -114,9 +114,10 @@ async function callClaude(system, user) {
   if (data.error) throw new Error(data.error.message);
   return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
 }
+// After
 function extractJSON(text) {
   try {
-    const clean = text.replace(/```json[\s\S]*?```|```/g, "").trim();
+    const clean = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
     const s = clean.indexOf("{"), e = clean.lastIndexOf("}");
     if (s !== -1 && e !== -1) return JSON.parse(clean.slice(s, e + 1));
   } catch (_) {}
@@ -264,6 +265,7 @@ export default function App() {
         newResults[item.id] = { summary: "取得できませんでした。", status: "unconfirmed", missing: "デスクトップリサーチでは確認不可。訪問時に直接確認が必要です。" };
       }
       setResults({ ...newResults });
+      await new Promise(r => setTimeout(r, 1500));
     }
     setProgress(p => ({ ...p, done: p.total, current: "" }));
     setAppStatus("done");
