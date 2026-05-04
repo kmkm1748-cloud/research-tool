@@ -378,10 +378,14 @@ function ResultCard({ item, result }) {
       </div>
       {open && (
         <div style={{ padding: "10px 14px 12px", borderTop: `1px solid ${cfg.border}` }}>
-          <p style={{ margin: "0 0 8px", fontSize: 13, color: "#374151", lineHeight: 1.85 }}>{result?.summary || "情報を取得できませんでした。"}</p>
-          {result?.missing && st!=="confirmed" && (
+          <p style={{ margin: "0 0 8px", fontSize: 13, color: "#374151", lineHeight: 1.85 }}>
+            {result?.summary || "情報を取得できませんでした。"}
+          </p>
+          {result?.missing && st !== "confirmed" && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 7, background: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: 7, padding: "7px 11px", marginTop: 6 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, whiteSpace: "nowrap", marginTop: 1 }}>{st==="unconfirmed"?"⚠ 要ヒアリング":"△ 要確認"}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, whiteSpace: "nowrap", marginTop: 1 }}>
+                {st==="unconfirmed"?"⚠ 要ヒアリング":"△ 要確認"}
+              </span>
               <span style={{ fontSize: 12, color: cfg.color, lineHeight: 1.6 }}>{result.missing}</span>
             </div>
           )}
@@ -465,15 +469,6 @@ export default function App() {
     const industry = getIndustry();
     setProgress({ done: 0, total: items.length + (hasPrior ? 1 : 0) + 1, current: "公式URLを特定中" });
 
-    const SYSTEM = `あなたはB2B営業支援AIです。提供された公式ページの情報を最優先で使用し、JSONのみ返答。
-【厳守ルール】
-- 提供された公式情報に記載された事実のみ記載する
-- 推測・類推・一般論は一切書かない
-- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載
-- missingには「訪問時に直接確認すべき具体的な質問」を書く
-- 前置き・マークダウン不要。JSONのみ返答。`;
-
-    // Step1: 企業URLを特定
     const urls = await findCompanyUrls(confirmedCompany);
     setProgress({ done: 1, total: items.length + (hasPrior ? 1 : 0) + 1, current: "" });
 
@@ -502,8 +497,6 @@ export default function App() {
           ? PROMPTS.market_share(confirmedCompany, industry)
           : (PROMPTS[item.id]?.(confirmedCompany) || `"${confirmedCompany}"について「${item.label}」を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`);
         const prompt = priorContext ? base + priorContext + "\n※事前情報に記載された内容はそのままsummaryに含めてよい。推測は書かない。" : base;
-
-        // Step2+3: URL fetch → Claude解析
         const raw = await deepResearch(confirmedCompany, item.id, prompt, urls);
         const parsed = extractJSON(raw);
         newResults[item.id] = parsed || { summary: raw.slice(0, 200), status: "partial", missing: "" };
@@ -511,7 +504,7 @@ export default function App() {
         newResults[item.id] = { summary: "取得できませんでした。", status: "unconfirmed", missing: "デスクトップリサーチでは確認不可。訪問時に直接確認が必要です。" };
       }
       setResults({ ...newResults });
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, 8000));
     }
     setProgress(p => ({ ...p, done: p.total, current: "" }));
     setAppStatus("done");
@@ -756,7 +749,9 @@ export default function App() {
 
               {appStatus==="done" && hearingItems.length > 0 && (
                 <div style={{ background: "#fff5f5", border: "1px solid #fecaca", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#dc2626", marginBottom: 8 }}>⚠️ デスクトップリサーチで確認できなかった項目 ({hearingItems.length}件) — 初回訪問で確認</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#dc2626", marginBottom: 8 }}>
+                    ⚠️ デスクトップリサーチで確認できなかった項目 ({hearingItems.length}件) — 初回訪問で確認
+                  </div>
                   {hearingItems.map(item => (
                     <div key={item.id} style={{ display: "flex", gap: 8, fontSize: 12, marginBottom: 4 }}>
                       <span style={{ color: "#dc2626", flexShrink: 0 }}>•</span>
@@ -769,12 +764,21 @@ export default function App() {
 
               {appStatus==="done" && partialItems.length > 0 && (
                 <div style={{ background: "#fffdf0", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 16px", marginBottom: 12 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#a16207", marginBottom: 6 }}>△ 情報が一部のみ取得できた項目 ({partialItems.length}件) — 追加確認推奨</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#a16207", marginBottom: 6 }}>
+                    △ 情報が一部のみ取得できた項目 ({partialItems.length}件) — 追加確認推奨
+                  </div>
                   {partialItems.map(item => (
-                    <div key={item.id} style={{ display: "flex", gap: 8, fontSize: 12, marginBottom: 3 }}>
+                    <div key={item.id} style={{ display: "flex", gap: 8, fontSize: 12, marginBottom: 6 }}>
                       <span style={{ color: "#a16207", flexShrink: 0 }}>•</span>
                       <span style={{ fontWeight: 600, color: "#111827", flexShrink: 0, minWidth: 120 }}>{item.label}</span>
-                      <span style={{ color: "#78350f" }}>{results[item.id]?.missing||""}</span>
+                      <div style={{ flex: 1 }}>
+                        {results[item.id]?.summary && (
+                          <div style={{ fontSize: 12, color: "#78350f", marginBottom: 3 }}>{results[item.id].summary}</div>
+                        )}
+                        {results[item.id]?.missing && (
+                          <div style={{ fontSize: 11, color: "#92400e", opacity: 0.8 }}>△ {results[item.id].missing}</div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
