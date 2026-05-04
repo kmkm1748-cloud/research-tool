@@ -265,7 +265,7 @@ export default function App() {
         newResults[item.id] = { summary: "取得できませんでした。", status: "unconfirmed", missing: "デスクトップリサーチでは確認不可。訪問時に直接確認が必要です。" };
       }
       setResults({ ...newResults });
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 3000));
     }
     setProgress(p => ({ ...p, done: p.total, current: "" }));
     setAppStatus("done");
