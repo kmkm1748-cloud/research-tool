@@ -20,6 +20,14 @@ module.exports = async function handler(req, res) {
       if (response.status !== 429) break;
       await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
     }
+    if (data.content) {
+      data.content = data.content.map(block => {
+        if (block.type === 'text' && block.text) {
+          block.text = block.text.replace(/]*>|<\/antml:cite>/g, '');
+        }
+        return block;
+      });
+    }
     res.status(response.status).json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
