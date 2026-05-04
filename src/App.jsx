@@ -114,168 +114,152 @@ function extractJSON(text) {
   return null;
 }
 
-// 倉庫アニメーション進捗バー
+// 倉庫アニメーション - 1項目=1段ボールがゆっくり流れる
 function WarehouseProgress({ done, total, current }) {
   const pct = total > 0 ? done / total : 0;
   const remaining = (total - done) * 5;
   const mins = Math.floor(remaining / 60);
   const secs = remaining % 60;
   const timeStr = mins > 0 ? `約${mins}分${secs > 0 ? secs + "秒" : ""}` : `約${secs}秒`;
+
+  // tick: 100msごとに進む。1サイクル=200tick(20秒)で1段ボールの旅
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 100);
     return () => clearInterval(id);
   }, []);
 
-  const beltOffset = (tick * 3) % 24;
-  // ロボットアーム：掴む動作サイクル（0-60: 下降して掴む, 60-120: 上昇して移動）
-  const armCycle = tick % 120;
-  const armReach = armCycle < 60 ? Math.sin((armCycle / 60) * Math.PI) : 0;
-  const armGrip = armCycle > 25 && armCycle < 95;
-  const boxOnArm = armCycle > 30 && armCycle < 90;
-  const forkX = 30 + pct * 160;
-  const completedBoxes = done;
+  // 1サイクル200tick: 0-80コンベア移動, 80-140アーム掴む, 140-200パレットへ
+  const cycle = tick % 200;
+  const CONV_END = 80;
+  const ARM_END = 140;
+
+  // 段ボールのコンベア上X座標 (0-80tick: 左端→右端)
+  const boxConvX = cycle < CONV_END ? 15 + (cycle / CONV_END) * 100 : 115;
+  const boxOnConv = cycle < CONV_END;
+
+  // アーム動作 (80-140)
+  const armPhase = cycle >= CONV_END && cycle < ARM_END ? (cycle - CONV_END) / (ARM_END - CONV_END) : 0;
+  const armDown = Math.sin(armPhase * Math.PI); // 0→1→0
+  const armGripping = armPhase > 0.3 && armPhase < 0.85;
+  const boxOnArm = armPhase > 0.35 && armPhase < 0.9;
+
+  // パレットへ積まれた数 (140-200で+1)
+  const paletteCount = done; // 完了数=パレット上の箱数
+
+  // フォークリフト位置
+  const forkX = 30 + pct * 155;
+
+  // ベルトの動きライン
+  const beltOffset = (tick * 1.5) % 20;
 
   return (
     <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 14px", marginBottom: 8 }}>
-      {/* 調査中テキスト - 上部 */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <span style={{ fontSize: 11, color: "#475569", fontWeight: 500 }}>
-          {current ? `「${current}」調査中...` : "完了"}
+          {current ? `「${current}」調査中...` : done === total && total > 0 ? "完了！" : "準備中"}
         </span>
         <span style={{ fontSize: 11, color: "#94a3b8" }}>{done}/{total}</span>
       </div>
 
-      {/* SVGアニメーション */}
-      <svg viewBox="0 0 300 80" width="100%" style={{ display: "block", background: "#f1f5f9", borderRadius: 8 }}>
+      <svg viewBox="0 0 300 82" width="100%" style={{ display: "block", background: "#f1f5f9", borderRadius: 8 }}>
         {/* 床 */}
-        <rect x="0" y="64" width="300" height="16" fill="#e2e8f0" />
-        <rect x="0" y="62" width="300" height="3" fill="#cbd5e1" />
+        <rect x="0" y="65" width="300" height="17" fill="#e2e8f0" />
+        <rect x="0" y="63" width="300" height="3" fill="#cbd5e1" />
 
-        {/* コンベアベルト本体 */}
-        <rect x="8" y="50" width="130" height="13" rx="3" fill="#334155" />
-        <rect x="8" y="50" width="130" height="13" rx="3" fill="none" stroke="#475569" strokeWidth="1" />
-        {/* ベルトライン */}
-        <clipPath id="wbelt"><rect x="8" y="50" width="130" height="13" /></clipPath>
-        <g clipPath="url(#wbelt)">
-          {Array.from({ length: 10 }).map((_, i) => (
+        {/* コンベアベルト */}
+        <rect x="8" y="50" width="120" height="14" rx="3" fill="#334155" />
+        <clipPath id="wbc2"><rect x="8" y="50" width="120" height="14" /></clipPath>
+        <g clipPath="url(#wbc2)">
+          {Array.from({ length: 9 }).map((_, i) => (
             <line key={i}
-              x1={8 + ((i * 16 - beltOffset + 130) % 130)}
-              y1="50"
-              x2={8 + ((i * 16 - beltOffset + 130) % 130)}
-              y2="63"
+              x1={8 + ((i * 16 - beltOffset + 120) % 120)}
+              y1="50" x2={8 + ((i * 16 - beltOffset + 120) % 120)} y2="64"
               stroke="#475569" strokeWidth="1.5" />
           ))}
         </g>
-        {/* ローラー */}
-        <circle cx="11" cy="56" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" />
-        <circle cx="135" cy="56" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" />
+        <rect x="8" y="50" width="120" height="14" rx="3" fill="none" stroke="#475569" strokeWidth="1" />
+        <circle cx="11" cy="57" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" />
+        <circle cx="125" cy="57" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" />
 
-        {/* コンベア上の荷物（流れる） */}
-        {[0, 40, 80].map((offset, i) => {
-          const bx = 15 + ((offset + tick * 2.5) % 115);
-          if (bx > 128 || boxOnArm) return null;
-          return (
-            <g key={i}>
-              <rect x={bx} y="41" width="13" height="10" rx="2" fill="#f59e0b" stroke="#d97706" strokeWidth="0.5" />
-              <line x1={bx+2} y1="44" x2={bx+11} y2="44" stroke="#92400e" strokeWidth="0.8" />
-              <line x1={bx+6} y1="41" x2={bx+6} y2="51" stroke="#92400e" strokeWidth="0.8" />
-            </g>
-          );
-        })}
+        {/* コンベア上の段ボール（1個がゆっくり流れる） */}
+        {boxOnConv && (
+          <g>
+            <rect x={boxConvX} y="40" width="16" height="12" rx="2" fill="#f59e0b" stroke="#d97706" strokeWidth="0.8" />
+            <line x1={boxConvX+2} y1="44" x2={boxConvX+14} y2="44" stroke="#92400e" strokeWidth="0.8" />
+            <line x1={boxConvX+8} y1="40" x2={boxConvX+8} y2="52" stroke="#92400e" strokeWidth="0.8" />
+          </g>
+        )}
 
         {/* ロボットアーム */}
-        <g transform="translate(148, 10)">
+        <g transform="translate(145, 8)">
           {/* 天井レール */}
-          <rect x="-8" y="0" width="16" height="5" rx="2" fill="#64748b" />
-          {/* アーム縦部分 */}
-          <rect x="-3" y="4" width="6" height={18 + armReach * 18} rx="2" fill="#475569" />
-          {/* アーム先端部 */}
-          <g transform={`translate(0, ${22 + armReach * 18})`}>
-            <rect x="-5" y="0" width="10" height="4" rx="1" fill="#334155" />
-            {/* グリッパー左 */}
-            <rect
-              x={armGrip ? -6 : -8} y="3" width="4" height="7" rx="1"
-              fill="#94a3b8"
-              style={{ transition: "x 0.1s" }}
-            />
-            {/* グリッパー右 */}
-            <rect
-              x={armGrip ? 2 : 4} y="3" width="4" height="7" rx="1"
-              fill="#94a3b8"
-              style={{ transition: "x 0.1s" }}
-            />
+          <rect x="-10" y="0" width="20" height="5" rx="2" fill="#475569" />
+          <rect x="-4" y="-3" width="8" height="5" rx="1" fill="#64748b" />
+          {/* アーム本体（下方向に伸びる） */}
+          <rect x="-3" y="4" width="6" height={20 + armDown * 16} rx="2" fill="#334155" />
+          {/* アーム先端 */}
+          <g transform={`translate(0, ${24 + armDown * 16})`}>
+            <rect x="-6" y="0" width="12" height="4" rx="1" fill="#1e293b" />
+            {/* グリッパー */}
+            <rect x={armGripping ? -7 : -9} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
+            <rect x={armGripping ? 2 : 4} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
             {/* 掴んでいる箱 */}
             {boxOnArm && (
-              <g transform="translate(-6, 8)">
-                <rect x="0" y="0" width="12" height="9" rx="2" fill="#f59e0b" stroke="#d97706" strokeWidth="0.5" />
-                <line x1="2" y1="3" x2="10" y2="3" stroke="#92400e" strokeWidth="0.8" />
+              <g transform="translate(-7, 9)">
+                <rect x="0" y="0" width="14" height="11" rx="2" fill="#f59e0b" stroke="#d97706" strokeWidth="0.6" />
+                <line x1="2" y1="4" x2="12" y2="4" stroke="#92400e" strokeWidth="0.8" />
+                <line x1="7" y1="0" x2="7" y2="11" stroke="#92400e" strokeWidth="0.8" />
               </g>
             )}
           </g>
-          {/* モーター部 */}
-          <rect x="-8" y="4" width="6" height="8" rx="2" fill="#1e3a8a" />
-          <circle cx="-5" cy="8" r="2" fill="#3b82f6" />
+          {/* モーター */}
+          <rect x="-10" y="3" width="7" height="9" rx="2" fill="#1e3a8a" />
+          <circle cx="-6" cy="7" r="2.5" fill="#3b82f6" />
         </g>
 
         {/* パレット */}
-        <rect x="178" y="58" width="48" height="5" rx="1" fill="#92400e" />
-        <rect x="182" y="55" width="40" height="4" rx="1" fill="#78350f" />
-        {/* パレット脚 */}
-        {[183, 196, 209, 222].map(x => (
-          <rect key={x} x={x} y="62" width="4" height="2" fill="#78350f" />
+        <rect x="175" y="58" width="50" height="6" rx="1" fill="#92400e" />
+        <rect x="179" y="54" width="42" height="5" rx="1" fill="#78350f" />
+        {[180, 193, 206, 219].map(x => (
+          <rect key={x} x={x} y="63" width="4" height="2" fill="#78350f" />
         ))}
-        {/* 積まれた箱 */}
-        {Array.from({ length: Math.min(completedBoxes, 8) }).map((_, i) => {
+        {/* パレット上の箱（完了数分） */}
+        {Array.from({ length: Math.min(paletteCount, 8) }).map((_, i) => {
           const col = i % 4;
           const row = Math.floor(i / 4);
           return (
             <g key={i}>
-              <rect x={182 + col * 10} y={50 - row * 9} width="9" height="8" rx="1" fill="#f59e0b" stroke="#d97706" strokeWidth="0.5" />
-              <line x1={183 + col * 10} y1={53 - row * 9} x2={190 + col * 10} y2={53 - row * 9} stroke="#92400e" strokeWidth="0.6" />
+              <rect x={180 + col * 10} y={46 - row * 11} width="9" height="9" rx="1" fill="#f59e0b" stroke="#d97706" strokeWidth="0.5" />
+              <line x1={181+col*10} y1={49-row*11} x2={188+col*10} y2={49-row*11} stroke="#92400e" strokeWidth="0.6" />
             </g>
           );
         })}
 
         {/* 自動フォークリフト */}
-        <g transform={`translate(${forkX}, 30)`}>
-          {/* マスト */}
-          <rect x="14" y="-4" width="4" height="28" rx="1" fill="#1e40af" />
-          <rect x="16" y="-4" width="2" height="28" rx="0" fill="#1d4ed8" opacity="0.5" />
-          {/* フォーク爪 */}
-          <rect x="17" y="18" width="20" height="2.5" rx="1" fill="#93c5fd" />
-          <rect x="17" y="22" width="20" height="2.5" rx="1" fill="#93c5fd" />
-          {/* 車体 */}
-          <rect x="-12" y="10" width="28" height="18" rx="3" fill="#1d4ed8" />
-          {/* キャビン */}
-          <rect x="-8" y="4" width="14" height="10" rx="2" fill="#2563eb" />
-          {/* 窓 */}
-          <rect x="-6" y="5" width="10" height="6" rx="1" fill="#bfdbfe" opacity="0.8" />
-          {/* ライト */}
+        <g transform={`translate(${forkX}, 28)`}>
+          <rect x="14" y="-2" width="4" height="30" rx="1" fill="#1e40af" />
+          <rect x="17" y="20" width="22" height="2.5" rx="1" fill="#93c5fd" />
+          <rect x="17" y="24" width="22" height="2.5" rx="1" fill="#93c5fd" />
+          <rect x="-13" y="10" width="29" height="18" rx="3" fill="#1d4ed8" />
+          <rect x="-9" y="4" width="15" height="10" rx="2" fill="#2563eb" />
+          <rect x="-7" y="5" width="11" height="7" rx="1" fill="#bfdbfe" opacity="0.85" />
           <ellipse cx="14" cy="14" rx="2.5" ry="2" fill="#fef08a" />
-          <ellipse cx="14" cy="20" rx="1.5" ry="1.2" fill="#fca5a5" />
-          {/* カウンターウェイト */}
-          <rect x="-14" y="16" width="6" height="10" rx="2" fill="#1e3a8a" />
-          {/* タイヤ前 */}
+          <rect x="-15" y="16" width="6" height="10" rx="2" fill="#1e3a8a" />
           <ellipse cx="8" cy="29" rx="5" ry="4" fill="#1e293b" />
           <ellipse cx="8" cy="29" rx="3" ry="2.5" fill="#334155" />
           <circle cx="8" cy="29" r="1" fill="#64748b" />
-          {/* タイヤ後 */}
           <ellipse cx="-8" cy="29" rx="4" ry="3.5" fill="#1e293b" />
           <ellipse cx="-8" cy="29" rx="2.5" ry="2" fill="#334155" />
-          <circle cx="-8" cy="29" r="0.8" fill="#64748b" />
-          {/* 運転者シルエット */}
           <ellipse cx="-1" cy="7" rx="3" ry="3" fill="#1e3a8a" />
-          <rect x="-3" y="9" width="6" height="5" rx="1" fill="#1e3a8a" />
         </g>
 
-        {/* ゴールゾーン */}
-        <rect x="258" y="40" width="38" height="24" rx="2" fill="#f0fdf4" stroke="#86efac" strokeWidth="1" strokeDasharray="3,2" />
+        {/* ゴール */}
+        <rect x="258" y="40" width="38" height="25" rx="2" fill="#f0fdf4" stroke="#86efac" strokeWidth="1" strokeDasharray="3,2" />
         <text x="277" y="53" fontSize="7" fill="#16a34a" textAnchor="middle" fontWeight="600">GOAL</text>
-        <text x="277" y="61" fontSize="6" fill="#22c55e" textAnchor="middle">出荷済</text>
+        <text x="277" y="62" fontSize="6" fill="#22c55e" textAnchor="middle">出荷済</text>
       </svg>
 
-      {/* プログレスバー */}
       <div style={{ background: "#e2e8f0", borderRadius: 99, height: 5, overflow: "hidden", marginTop: 8 }}>
         <div style={{ height: "100%", width: `${Math.round(pct * 100)}%`, background: "linear-gradient(90deg, #2563eb, #22c55e)", transition: "width .5s", borderRadius: 99 }} />
       </div>
@@ -287,7 +271,6 @@ function WarehouseProgress({ done, total, current }) {
   );
 }
 
-// 企業名確認モーダル
 function CompanyModal({ company, candidates, onConfirm }) {
   const [selected, setSelected] = useState(candidates[0] || "");
   const [custom, setCustom] = useState("");
@@ -315,8 +298,7 @@ function CompanyModal({ company, candidates, onConfirm }) {
               style={{ padding: "9px 12px", fontSize: 13, border: "1.5px solid #1e3a8a", borderRadius: 8, outline: "none", fontFamily: "inherit" }} />
           )}
         </div>
-        <button onClick={() => finalName.trim() && onConfirm(finalName.trim())}
-          disabled={!finalName.trim()}
+        <button onClick={() => finalName.trim() && onConfirm(finalName.trim())} disabled={!finalName.trim()}
           style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, background: finalName.trim() ? "#1e3a8a" : "#d1d5db", color: "#fff", border: "none", borderRadius: 8, cursor: finalName.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
           確定してリサーチ開始
         </button>
@@ -393,6 +375,13 @@ export default function App() {
     return industrySelect;
   };
 
+  // 現在の選択がプリセットと一致するか判定
+  const activePreset = PRESETS.findIndex(p => {
+    if (p.ids.size !== selected.size) return false;
+    for (const id of p.ids) if (!selected.has(id)) return false;
+    return true;
+  });
+
   const toggle = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleCat = (cat) => {
     const ids = cat.items.map(i => i.id);
@@ -409,7 +398,6 @@ export default function App() {
   const partialItems = ALL_ITEMS.filter(i => selected.has(i.id) && results[i.id]?.status === "partial");
 
   const checkCompany = async (name) => {
-    // リトライ付き企業名確認
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 3000));
@@ -420,8 +408,8 @@ export default function App() {
         const parsed = extractJSON(raw);
         if (parsed?.ambiguous && parsed?.candidates?.length > 0) return parsed.candidates;
         return null;
-      } catch (e) {
-        if (attempt === 2) return null; // 3回失敗したらスキップ
+      } catch (_) {
+        if (attempt === 2) return null;
       }
     }
     return null;
@@ -454,7 +442,7 @@ export default function App() {
       try {
         const parseRaw = await callClaude(
           `あなたはB2B営業支援AIです。貼り付けられたヒアリングメモ・事前情報を整理しJSONのみ返答。前置き不要。`,
-          `以下は"${confirmedCompany}"に関する事前情報です。構造化してください。\n---\n${priorInfo}\n---\nJSONのみ: {"summary":"全体サマリー3〜4文","key_points":["重要ポイント1","重要ポイント2"],"known_challenges":"判明している課題・ニーズ","known_contacts":"判明している担当者情報","known_systems":"判明しているシステム環境","other":"その他有用情報"}`
+          `以下は"${confirmedCompany}"に関する事前情報です。\n---\n${priorInfo}\n---\nJSONのみ: {"summary":"全体サマリー3〜4文","key_points":["重要ポイント1","重要ポイント2"],"known_challenges":"判明している課題・ニーズ","known_contacts":"判明している担当者情報","known_systems":"判明しているシステム環境","other":"その他有用情報"}`
         );
         const pp = extractJSON(parseRaw);
         if (pp) { setParsedPrior(pp); priorContext = "\n\n【事前情報】" + JSON.stringify(pp); }
@@ -599,13 +587,23 @@ export default function App() {
               <div style={{ width: 3, height: 11, background: "#1e3a8a", borderRadius: 2 }} />
               調査項目　<span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 10 }}>{selected.size}件選択</span>
             </div>
+
+            {/* プリセット（ハイライト付き） */}
             <div style={{ display: "flex", gap: 4, marginBottom: 10, flexWrap: "wrap" }}>
-              {PRESETS.map(p => (
-                <button key={p.label} onClick={() => applyPreset(p)}
-                  style={{ fontSize: 10, padding: "3px 9px", borderRadius: 99, border: "1px solid #e5e7eb", background: "#f9fafb", cursor: "pointer", fontFamily: "inherit", color: "#374151", fontWeight: 500 }}>
-                  {p.label}
-                </button>
-              ))}
+              {PRESETS.map((p, idx) => {
+                const isActive = activePreset === idx;
+                return (
+                  <button key={p.label} onClick={() => applyPreset(p)}
+                    style={{
+                      fontSize: 10, padding: "4px 10px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", fontWeight: isActive ? 700 : 500,
+                      background: isActive ? "#1e3a8a" : "#f1f5f9",
+                      color: isActive ? "#fff" : "#374151",
+                      border: isActive ? "1.5px solid #1e3a8a" : "1.5px solid #e2e8f0",
+                    }}>
+                    {isActive ? "✓ " : ""}{p.label}
+                  </button>
+                );
+              })}
             </div>
 
             {CATEGORIES.map(cat => {
