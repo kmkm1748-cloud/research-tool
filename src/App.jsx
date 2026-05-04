@@ -13,28 +13,24 @@ const CATEGORIES = [
   {
     id: "market", label: "市場・競合", color: "#0f766e",
     items: [
-      { id: "market_share",      label: "業界シェア・市場ポジション", desc: "業界内順位・シェア推移" },
-      { id: "competitors",       label: "主要競合比較",               desc: "競合他社・差別化ポイント" },
-      { id: "market_size",       label: "市場規模・成長率",           desc: "TAM・市場トレンド・予測" },
-      { id: "market_structure",  label: "マーケット構造",             desc: "バリューチェーン・プレイヤー構造" },
+      { id: "market_share", label: "業界シェア・市場ポジション", desc: "業界内順位・シェア推移" },
     ],
   },
   {
     id: "finance", label: "財務", color: "#b45309",
     items: [
-      { id: "pl_summary",        label: "売上・利益サマリー",  desc: "直近3期の売上・営業利益・率" },
-      { id: "growth_profit",     label: "成長性・収益性評価",  desc: "CAGR・利益率トレンド・評価" },
-      { id: "financial_health",  label: "財務健全性",          desc: "自己資本比率・有利子負債・格付" },
-      { id: "capex",             label: "投資・設備動向",      desc: "CAPEX・設備投資方針・DX予算" },
+      { id: "pl_summary",       label: "売上・利益サマリー",  desc: "直近3期の売上・営業利益・率" },
+      { id: "growth_profit",    label: "成長性・収益性評価",  desc: "CAGR・利益率トレンド・評価" },
+      { id: "financial_health", label: "財務健全性",          desc: "自己資本比率・有利子負債・格付" },
+      { id: "capex",            label: "投資・設備動向",      desc: "CAPEX・設備投資方針・DX予算" },
     ],
   },
   {
     id: "strategy", label: "戦略・方針", color: "#7c3aed",
     items: [
-      { id: "mid_term_plan",    label: "中期経営計画",         desc: "KPI・重点施策・投資計画" },
-      { id: "dx_strategy",      label: "DX・自動化戦略",       desc: "IT投資方針・システム化動向" },
-      { id: "hr_hiring",        label: "人材・採用動向",       desc: "採用状況・人手不足感" },
-      { id: "sustainability",   label: "サステナビリティ方針", desc: "ESG・CO2削減・物流環境対応" },
+      { id: "mid_term_plan",  label: "中期経営計画",         desc: "KPI・重点施策・投資計画" },
+      { id: "dx_strategy",    label: "DX・自動化戦略",       desc: "IT投資方針・システム化動向" },
+      { id: "sustainability", label: "サステナビリティ方針", desc: "ESG・CO2削減・物流環境対応" },
     ],
   },
   {
@@ -42,23 +38,31 @@ const CATEGORIES = [
     items: [
       { id: "logistics_flow",   label: "物流フロー概要",   desc: "入荷〜保管〜出荷の基本フロー" },
       { id: "product_features", label: "取扱品の特性",     desc: "温度帯・サイズ・危険物・重量" },
-      { id: "seasonality",      label: "繁閑・季節変動",   desc: "ピーク時期・変動幅・対応状況" },
       { id: "existing_systems", label: "既存システム環境", desc: "WMS・TMS・ERP・連携状況" },
     ],
   },
   {
     id: "contact", label: "担当者・組織", color: "#0369a1",
     items: [
-      { id: "org_structure",  label: "部署・組織構成",           desc: "物流系部署の階層・組織図" },
-      { id: "key_person",     label: "想定キーパーソン",         desc: "担当役職・意思決定者・窓口" },
-      { id: "decision_flow",  label: "決裁フロー",               desc: "稟議プロセス・承認ライン・期間" },
-      { id: "recent_news",    label: "直近のニュース・トピック", desc: "IR・プレスリリース・受賞歴" },
+      { id: "org_structure", label: "部署・組織構成",           desc: "物流系部署の階層・組織図" },
+      { id: "recent_news",   label: "直近のニュース・トピック", desc: "IR・プレスリリース・受賞歴" },
     ],
   },
 ];
 
 const ALL_ITEMS = CATEGORIES.flatMap(c => c.items.map(i => ({ ...i, categoryColor: c.color, categoryLabel: c.label })));
-const DEFAULT_SELECTED = new Set(["company_overview","business_products","market_share","competitors","pl_summary","growth_profit","mid_term_plan","logistics_flow","product_features","org_structure","key_person","recent_news"]);
+const DEFAULT_SELECTED = new Set(["company_overview","business_products","market_share","pl_summary","growth_profit","mid_term_plan","logistics_flow","product_features","org_structure","recent_news"]);
+
+const INDUSTRY_OPTIONS = [
+  "食品・飲料・冷凍食品",
+  "小売・EC・通販",
+  "医薬品・医療機器",
+  "化学・素材・危険物",
+  "自動車・輸送機器",
+  "アパレル・雑貨",
+  "電子部品・精密機器",
+  "その他",
+];
 
 const STATUS = {
   confirmed:   { label: "確認済み",   bg: "#dcfce7", color: "#15803d", border: "#bbf7d0" },
@@ -73,29 +77,21 @@ const PROMPTS = {
   business_products: (c) => `"${c}"の事業領域・主力商材を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   group_structure:   (c) => `"${c}"のグループ構造（親会社・子会社・資本関係）を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   bases_network:     (c) => `"${c}"の拠点数・物流ネットワークを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  market_share:      (c) => `"${c}"の業界シェア・市場ポジションを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  competitors:       (c) => `"${c}"の主要競合と差別化ポイントを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  market_size:       (c) => `"${c}"が属する市場の規模・成長率を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  market_structure:  (c) => `"${c}"の業界バリューチェーン・プレイヤー構造を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
+  market_share:      (c, industry) => `"${c}"の${industry ? `${industry}業界における` : ""}業界シェア・市場ポジションを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   pl_summary:        (c) => `"${c}"の直近3期の売上・営業利益・率を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","revenue":"売上高","growth":"成長率","margin":"営業利益率","health":"財務評価","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   growth_profit:     (c) => `"${c}"の成長性・収益性トレンドを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   financial_health:  (c) => `"${c}"の財務健全性（自己資本比率・有利子負債）を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   capex:             (c) => `"${c}"の設備投資・CAPEX・DX予算動向を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   mid_term_plan:     (c) => `"${c}"の中期経営計画（KPI・重点施策）を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   dx_strategy:       (c) => `"${c}"のDX・自動化戦略・IT投資方針を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  hr_hiring:         (c) => `"${c}"の人材・採用動向・人手不足への対応を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   sustainability:    (c) => `"${c}"のESG・CO2削減・サステナビリティ方針を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   logistics_flow:    (c) => `"${c}"の物流フロー（入荷〜保管〜出荷）概要を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   product_features:  (c) => `"${c}"が扱う商品の特性（温度帯・サイズ・重量）を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  seasonality:       (c) => `"${c}"の繁閑・季節変動・ピーク時期を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   existing_systems:  (c) => `"${c}"が使用するWMS・TMS・ERP等の既存システムを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   org_structure:     (c) => `"${c}"の物流・DX系部署の組織構成を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","org_structure":"階層表記","dept":"担当部署","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  key_person:        (c) => `"${c}"の物流・システム系キーパーソン・担当役職を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","role":"想定役職","authority":"想定決裁権限","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
-  decision_flow:     (c) => `"${c}"の稟議・意思決定プロセス・承認ラインを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
   recent_news:       (c) => `"${c}"の直近1年のニュース・IR・プレスリリースを調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`,
 };
 
-// 環境変数からAPIキーを取得（Viteの場合はVITE_プレフィックス必須）
 const API_KEY = true;
 
 async function callClaude(system, user) {
@@ -114,7 +110,7 @@ async function callClaude(system, user) {
   if (data.error) throw new Error(data.error.message);
   return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
 }
-// After
+
 function extractJSON(text) {
   try {
     const clean = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
@@ -183,17 +179,24 @@ function ResultCard({ item, result }) {
 
 export default function App() {
   const [company, setCompany] = useState("");
-  const [visitDate, setVisitDate] = useState("");
-  const [salesRep, setSalesRep] = useState("");
+  const [dept, setDept] = useState("");
   const [priorInfo, setPriorInfo] = useState("");
   const [parsedPrior, setParsedPrior] = useState(null);
   const [selected, setSelected] = useState(new Set(DEFAULT_SELECTED));
+  const [industryMode, setIndustryMode] = useState("auto");
+  const [industrySelect, setIndustrySelect] = useState("食品・飲料・冷凍食品");
+  const [industryCustom, setIndustryCustom] = useState("");
   const [appStatus, setAppStatus] = useState("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0, current: "" });
   const [results, setResults] = useState({});
   const [activeCategory, setActiveCategory] = useState(null);
-  const [apiKeyMissing, setApiKeyMissing] = useState(false);
   const abortRef = useRef(false);
+
+  const getIndustry = () => {
+    if (industryMode === "auto") return "";
+    if (industrySelect === "その他") return industryCustom;
+    return industrySelect;
+  };
 
   const toggle = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleCat = (cat) => {
@@ -210,7 +213,7 @@ export default function App() {
   const partialItems = ALL_ITEMS.filter(i => selected.has(i.id) && results[i.id]?.status === "partial");
 
   const runResearch = async () => {
-    if (!company.trim() || selected.size === 0 || !API_KEY) return;
+    if (!company.trim() || selected.size === 0) return;
     abortRef.current = false;
     setAppStatus("loading");
     setResults({});
@@ -218,6 +221,7 @@ export default function App() {
     setActiveCategory(null);
     const items = ALL_ITEMS.filter(i => selected.has(i.id));
     const hasPrior = priorInfo.trim().length > 0;
+    const industry = getIndustry();
     setProgress({ done: 0, total: items.length + (hasPrior ? 1 : 0), current: "" });
 
     const SYSTEM = `あなたはB2B営業支援AIです。Web検索で企業の公開情報を調査しJSONのみ返答。
@@ -254,7 +258,9 @@ export default function App() {
       const item = items[i];
       setProgress({ done: i + offset, total: items.length + offset, current: item.label });
       try {
-        const base = PROMPTS[item.id]?.(company) || `"${company}"について「${item.label}」を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`;
+        const base = item.id === "market_share"
+          ? PROMPTS.market_share(company, industry)
+          : (PROMPTS[item.id]?.(company) || `"${company}"について「${item.label}」を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`);
         const prompt = priorContext
           ? base + priorContext + "\n※事前情報に記載された内容はそのままsummaryに含めてよい。公開情報で追加確認できた事実のみ追記する。推測は書かない。事前情報で判明済みの内容はstatusをconfirmedかpartialに。"
           : base;
@@ -275,10 +281,10 @@ export default function App() {
   const hasResults = Object.keys(results).length > 0;
   const displayCat = CATEGORIES.find(c => c.id === activeCategory) || CATEGORIES[0];
 
-  const inp = (label, val, setter, ph, type = "text") => (
+  const inp = (label, val, setter, ph) => (
     <div style={{ marginBottom: 7 }}>
       <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 3 }}>{label}</div>
-      <input type={type} value={val} onChange={e => setter(e.target.value)} placeholder={ph}
+      <input type="text" value={val} onChange={e => setter(e.target.value)} placeholder={ph}
         style={{ width: "100%", padding: "7px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none" }}
         onFocus={e => e.target.style.borderColor = "#1e3a8a"}
         onBlur={e => e.target.style.borderColor = "#e5e7eb"} />
@@ -296,14 +302,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* APIキー未設定の警告 */}
-      {apiKeyMissing && (
-        <div style={{ background: "#fef2f2", borderBottom: "1px solid #fecaca", padding: "10px 22px", fontSize: 13, color: "#dc2626" }}>
-          ⚠ <strong>VITE_ANTHROPIC_API_KEY</strong> が設定されていません。Vercelの環境変数に設定してください。
-        </div>
-      )}
-
-      <div style={{ display: "flex", height: `calc(100vh - ${apiKeyMissing ? 90 : 50}px)` }}>
+      <div style={{ display: "flex", height: "calc(100vh - 50px)" }}>
 
         {/* 左パネル */}
         <div style={{ width: 292, background: "#fff", borderRight: "1px solid #e5e7eb", overflowY: "auto", display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -312,17 +311,13 @@ export default function App() {
               <div style={{ width: 3, height: 11, background: "#1e3a8a", borderRadius: 2 }} />基本情報
             </div>
             {inp("顧客企業名 *", company, setCompany, "例：ニチレイロジグループ株式会社")}
-            {inp("訪問予定日", visitDate, setVisitDate, "", "date")}
-            {inp("担当者名", salesRep, setSalesRep, "例：田中 太郎")}
+            {inp("担当者部署", dept, setDept, "例：物流部・SCM部")}
 
             <div style={{ height: 1, background: "#f3f4f6", margin: "10px 0" }} />
 
             <div style={{ fontSize: 11, fontWeight: 600, color: "#1e3a8a", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
               <div style={{ width: 3, height: 11, background: "#1e3a8a", borderRadius: 2 }} />事前情報
               <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 10 }}>任意</span>
-            </div>
-            <div style={{ marginBottom: 4, fontSize: 11, color: "#6b7280", lineHeight: 1.5 }}>
-              ヒアリングメモ・打合せ記録などをそのまま貼り付けてください。
             </div>
             <textarea
               value={priorInfo}
@@ -336,6 +331,43 @@ export default function App() {
             {priorInfo.trim() && (
               <div style={{ fontSize: 11, color: "#15803d", marginBottom: 4, marginTop: 3 }}>
                 ✓ 事前情報あり — リサーチ時に自動反映します
+              </div>
+            )}
+
+            <div style={{ height: 1, background: "#f3f4f6", margin: "10px 0" }} />
+
+            {/* 業界指定 */}
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#1e3a8a", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{ width: 3, height: 11, background: "#1e3a8a", borderRadius: 2 }} />業界シェアの調査軸
+            </div>
+            <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
+              {["auto", "specify"].map(mode => (
+                <label key={mode} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12 }}>
+                  <input type="radio" name="industryMode" value={mode} checked={industryMode === mode} onChange={() => setIndustryMode(mode)} />
+                  {mode === "auto" ? "おまかせ" : "指定する"}
+                </label>
+              ))}
+            </div>
+            {industryMode === "specify" && (
+              <div style={{ marginBottom: 8 }}>
+                <select
+                  value={industrySelect}
+                  onChange={e => setIndustrySelect(e.target.value)}
+                  style={{ width: "100%", padding: "7px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 6 }}
+                >
+                  {INDUSTRY_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+                {industrySelect === "その他" && (
+                  <input
+                    type="text"
+                    value={industryCustom}
+                    onChange={e => setIndustryCustom(e.target.value)}
+                    placeholder="業界名を入力"
+                    style={{ width: "100%", padding: "7px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none" }}
+                    onFocus={e => e.target.style.borderColor = "#1e3a8a"}
+                    onBlur={e => e.target.style.borderColor = "#e5e7eb"}
+                  />
+                )}
               </div>
             )}
 
@@ -392,12 +424,12 @@ export default function App() {
               </div>
             )}
             <button onClick={runResearch}
-              disabled={appStatus === "loading" || !company.trim() || !selected.size || !API_KEY}
+              disabled={appStatus === "loading" || !company.trim() || !selected.size}
               style={{
                 width: "100%", padding: "10px", fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-                background: (appStatus === "loading" || !company.trim() || !selected.size || !API_KEY) ? "#d1d5db" : "#1e3a8a",
+                background: (appStatus === "loading" || !company.trim() || !selected.size) ? "#d1d5db" : "#1e3a8a",
                 color: "#fff", border: "none", borderRadius: 8,
-                cursor: (appStatus === "loading" || !company.trim() || !selected.size || !API_KEY) ? "not-allowed" : "pointer",
+                cursor: (appStatus === "loading" || !company.trim() || !selected.size) ? "not-allowed" : "pointer",
               }}>
               {appStatus === "loading" ? "調査中…" : "🔍 リサーチ開始"}
             </button>
@@ -417,9 +449,7 @@ export default function App() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
                 <div>
                   <div style={{ fontSize: 20, fontWeight: 700, color: "#111827" }}>{company}</div>
-                  <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
-                    {visitDate && `訪問予定：${visitDate}　`}{salesRep && `担当：${salesRep}`}
-                  </div>
+                  {dept && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>担当部署：{dept}</div>}
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                   {["confirmed","partial","unconfirmed"].map(s => statusCounts[s] ? (
