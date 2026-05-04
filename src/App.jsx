@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect } from "react";
 
 const CATEGORIES = [
@@ -68,47 +69,90 @@ const STATUS = {
 
 const FACT_ONLY = "公開情報・報道・公式サイトで確認できた事実のみ記載。推測・類推・一般論は禁止。不明な場合はstatusをunconfirmedにして空白にする。";
 
-// 項目ごとの検索クエリ定義
-const SEARCH_QUERIES = {
-  company_overview:  (c) => [`${c} 会社概要 設立 従業員数 公式`, `${c} 企業情報 本社`],
-  business_products: (c) => [`${c} 事業内容 主力商品 サービス 公式`, `${c} 事業領域 取扱品`],
-  group_structure:   (c) => [`${c} グループ会社 子会社 組織図`, `${c} 資本関係 グループ構成`],
-  bases_network:     (c) => [`${c} 拠点 物流センター 倉庫 所在地`, `${c} 配送網 物流ネットワーク`],
-  market_share:      (c, industry) => [`${c} ${industry||""}業界シェア 市場ポジション`, `${c} 業界順位 競合比較`],
-  pl_summary:        (c) => [`${c} 決算 売上高 営業利益 2024 2025`, `${c} IR 財務ハイライト 業績`],
-  growth_profit:     (c) => [`${c} 業績推移 成長率 収益性 決算`, `${c} CAGR 利益率トレンド`],
-  financial_health:  (c) => [`${c} 自己資本比率 有利子負債 財務健全性`, `${c} 貸借対照表 財務指標`],
-  capex:             (c) => [`${c} 設備投資 CAPEX 投資計画 2024 2025`, `${c} DX投資 IT予算`],
-  mid_term_plan:     (c) => [`${c} 中期経営計画 2025 2026 KPI`, `${c} 経営戦略 重点施策`],
-  dx_strategy:       (c) => [`${c} DX デジタル化 IT投資 自動化`, `${c} システム化 デジタル戦略`],
-  sustainability:    (c) => [`${c} ESG CO2削減 サステナビリティ 環境`, `${c} カーボンニュートラル 物流環境`],
-  logistics_flow:    (c) => [`${c} 物流フロー 入荷 出荷 保管 倉庫`, `${c} サプライチェーン 物流業務`],
-  product_features:  (c) => [`${c} 取扱品 商品特性 温度管理 危険物`, `${c} 商品カテゴリ 物流品目`],
-  existing_systems:  (c) => [`${c} WMS TMS ERP システム 物流`, `${c} 基幹システム IT環境`],
-  org_structure:     (c) => [`${c} 組織図 物流部門 SCM部署`, `${c} 部署構成 物流担当`],
-  recent_news:       (c) => [`${c} プレスリリース ニュース 2025`, `${c} IR 新着情報 トピック 2024 2025`],
+// 企業名からドメインを推定
+function guessDomain(company) {
+  const cleaned = company
+    .replace(/株式会社|有限会社|合同会社|ホールディングス|グループ|HD|Holdings/gi, "")
+    .replace(/[　\s]/g, "")
+    .toLowerCase();
+  const map = {
+    "subaru": "subaru.co.jp",
+    "スバル": "subaru.co.jp",
+    "toyota": "toyota.co.jp",
+    "トヨタ": "toyota.co.jp",
+    "honda": "honda.co.jp",
+    "ホンダ": "honda.co.jp",
+    "nissan": "nissan.co.jp",
+    "ニッサン": "nissan.co.jp",
+    "日産": "nissan.co.jp",
+    "nichirei": "nichirei.co.jp",
+    "ニチレイ": "nichirei.co.jp",
+    "yamato": "yamato-hd.co.jp",
+    "ヤマト": "yamato-hd.co.jp",
+    "sagawa": "sagawa-exp.co.jp",
+    "佐川": "sagawa-exp.co.jp",
+    "nipponexpress": "nipponexpress.com",
+    "日本通運": "nipponexpress.com",
+    "hitachi": "hitachi.co.jp",
+    "日立": "hitachi.co.jp",
+    "fujitsu": "fujitsu.com",
+    "富士通": "fujitsu.com",
+    "sony": "sony.co.jp",
+    "ソニー": "sony.co.jp",
+    "panasonic": "panasonic.com",
+    "パナソニック": "panasonic.com",
+    "mitsubishi": "mitsubishi.com",
+    "三菱": "mitsubishi.com",
+    "mitsui": "mitsui.com",
+    "三井": "mitsui.com",
+    "sumitomo": "sumitomo.com",
+    "住友": "sumitomo.com",
+  };
+  for (const [key, domain] of Object.entries(map)) {
+    if (cleaned.includes(key.toLowerCase())) return domain;
+  }
+  return null;
+}
+
+// 項目ごとのURLパターン
+const URL_PATTERNS = {
+  company_overview:  (domain) => [`https://${domain}`, `https://${domain}/company/`, `https://${domain}/corporate/`],
+  business_products: (domain) => [`https://${domain}/products/`, `https://${domain}/services/`, `https://${domain}/business/`],
+  group_structure:   (domain) => [`https://${domain}/corporate/group/`, `https://${domain}/company/group/`],
+  bases_network:     (domain) => [`https://${domain}/corporate/network/`, `https://${domain}/company/bases/`],
+  market_share:      (domain) => [`https://${domain}/ir/`, `https://${domain}/investor/`],
+  pl_summary:        (domain) => [`https://${domain}/ir/finance/`, `https://${domain}/ir/result/`, `https://${domain}/ir/`],
+  growth_profit:     (domain) => [`https://${domain}/ir/finance/`, `https://${domain}/ir/result/`],
+  financial_health:  (domain) => [`https://${domain}/ir/finance/`, `https://${domain}/ir/`],
+  capex:             (domain) => [`https://${domain}/ir/finance/`, `https://${domain}/ir/strategy/`],
+  mid_term_plan:     (domain) => [`https://${domain}/ir/strategy/`, `https://${domain}/ir/management/`, `https://${domain}/corporate/strategy/`],
+  dx_strategy:       (domain) => [`https://${domain}/corporate/dx/`, `https://${domain}/news/`, `https://${domain}/ir/strategy/`],
+  sustainability:    (domain) => [`https://${domain}/sustainability/`, `https://${domain}/csr/`, `https://${domain}/environment/`],
+  logistics_flow:    (domain) => [`https://${domain}/corporate/logistics/`, `https://${domain}/business/logistics/`, `https://${domain}/services/logistics/`],
+  product_features:  (domain) => [`https://${domain}/products/`, `https://${domain}/business/products/`],
+  existing_systems:  (domain) => [`https://${domain}/corporate/dx/`, `https://${domain}/ir/strategy/`],
+  org_structure:     (domain) => [`https://${domain}/corporate/organization/`, `https://${domain}/company/organization/`],
+  recent_news:       (domain) => [`https://${domain}/news/`, `https://${domain}/press/`, `https://${domain}/ir/news/`],
 };
 
-const PROMPTS = {
-  company_overview:  (c) => `"${c}"の会社概要（設立・本社・従業員数・上場区分）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  business_products: (c) => `"${c}"の事業領域・主力商材。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  group_structure:   (c) => `"${c}"のグループ構造（親会社・子会社・資本関係）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  bases_network:     (c) => `"${c}"の拠点数・物流ネットワーク。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  market_share:      (c, industry) => `"${c}"の${industry?`${industry}業界における`:""}業界シェア・市場ポジション。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  pl_summary:        (c) => `"${c}"の直近3期の売上・営業利益・率。${FACT_ONLY} JSONのみ: {"summary":"3文以内","revenue":"売上高","growth":"成長率","margin":"営業利益率","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  growth_profit:     (c) => `"${c}"の成長性・収益性トレンド。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  financial_health:  (c) => `"${c}"の財務健全性（自己資本比率・有利子負債）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  capex:             (c) => `"${c}"の設備投資・CAPEX・DX予算動向。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  mid_term_plan:     (c) => `"${c}"の中期経営計画（KPI・重点施策）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  dx_strategy:       (c) => `"${c}"のDX・自動化戦略・IT投資方針。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  sustainability:    (c) => `"${c}"のESG・CO2削減・サステナビリティ方針。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  logistics_flow:    (c) => `"${c}"の物流フロー（入荷〜保管〜出荷）概要。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  product_features:  (c) => `"${c}"が扱う商品の特性（温度帯・サイズ・重量）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  existing_systems:  (c) => `"${c}"が使用するWMS・TMS・ERP等の既存システム。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  org_structure:     (c) => `"${c}"の物流・DX系部署の組織構成。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-  recent_news:       (c) => `"${c}"の直近1年のニュース・IR・プレスリリース。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`,
-};
+// web_searchなしでClaudeを呼ぶ（解析専用）
+async function callClaudeNoSearch(system, user) {
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-5",
+      max_tokens: 1500,
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+}
 
+// web_searchありでClaudeを呼ぶ
 async function callClaude(system, user) {
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -134,58 +178,10 @@ async function fetchUrl(url) {
       body: JSON.stringify({ url }),
     });
     const data = await res.json();
-    return data.text || "";
+    return { text: data.text || "", url };
   } catch (_) {
-    return "";
+    return { text: "", url };
   }
-}
-
-// 項目ごとに専用URL検索→fetch→解析
-async function deepResearchPerItem(company, itemId, prompt, industry) {
-  const queries = SEARCH_QUERIES[itemId]?.(company, industry) || [`${company} ${itemId}`];
-
-  // Step1: 各クエリでURLを検索して特定
-  let bestUrl = "";
-  let fetchedText = "";
-
-  for (const query of queries) {
-    try {
-      const searchRaw = await callClaude(
-        `あなたは企業調査AIです。検索クエリに最も適した公式・信頼性の高いURLを1つ特定してください。JSONのみ返答。`,
-        `検索クエリ「${query}」で最も信頼性の高い公式情報ページのURLを1つ特定してください。
-企業の公式サイト・IR・プレスリリースを優先。ニュースサイトより公式サイト優先。
-JSONのみ: {"url":"https://...","reason":"選んだ理由を10文字以内"}
-URLが見つからない場合: {"url":"","reason":"不明"}`
-      );
-      const parsed = extractJSON(searchRaw);
-      if (parsed?.url && parsed.url.startsWith("http")) {
-        const text = await fetchUrl(parsed.url);
-        if (text.length > 300) {
-          bestUrl = parsed.url;
-          fetchedText = text.slice(0, 5000);
-          break;
-        }
-      }
-    } catch (_) {}
-    await new Promise(r => setTimeout(r, 2000));
-  }
-
-  // Step2: 取得テキスト + プロンプトでClaude解析
-  const enhancedPrompt = fetchedText
-    ? `${prompt}\n\n以下は${bestUrl}から直接取得した公式情報です。この情報を最優先で使用し、source_urlには「${bestUrl}」を記載してください：\n\n${fetchedText}`
-    : `${prompt}\n\nsource_urlには参照したURLを記載してください。`;
-
-  return await callClaude(
-    `あなたはB2B営業支援AIです。提供された公式ページの情報を最優先で使用し、JSONのみ返答。
-【厳守ルール】
-- 提供された公式情報に記載された事実のみ記載する
-- 推測・類推・一般論は一切書かない
-- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載
-- missingには「訪問時に直接確認すべき具体的な質問」を書く
-- source_urlには実際に参照したURLを必ず記載する
-- 前置き・マークダウン不要。JSONのみ返答。`,
-    enhancedPrompt
-  );
 }
 
 function extractJSON(text) {
@@ -197,12 +193,142 @@ function extractJSON(text) {
   return null;
 }
 
+// 項目ごとの検索クエリ
+const SEARCH_QUERIES = {
+  company_overview:  (c) => [`${c} 会社概要 設立 従業員数 本社`, `${c} 企業情報`],
+  business_products: (c) => [`${c} 事業内容 主力商品 サービス`, `${c} 事業領域`],
+  group_structure:   (c) => [`${c} グループ会社 子会社 組織`, `${c} グループ構成`],
+  bases_network:     (c) => [`${c} 拠点 物流センター 倉庫 所在地`, `${c} 配送網`],
+  market_share:      (c, ind) => [`${c} ${ind||""}業界シェア 市場ポジション`, `${c} 業界順位`],
+  pl_summary:        (c) => [`${c} 決算 売上高 営業利益 2024 2025`, `${c} 業績 財務ハイライト`],
+  growth_profit:     (c) => [`${c} 業績推移 成長率 収益性`, `${c} CAGR 利益率`],
+  financial_health:  (c) => [`${c} 自己資本比率 有利子負債 財務`, `${c} 財務健全性`],
+  capex:             (c) => [`${c} 設備投資 CAPEX 投資計画 2024 2025`, `${c} DX投資`],
+  mid_term_plan:     (c) => [`${c} 中期経営計画 2025 2026 KPI`, `${c} 経営戦略`],
+  dx_strategy:       (c) => [`${c} DX デジタル化 IT投資 自動化 2024 2025`, `${c} デジタル戦略`],
+  sustainability:    (c) => [`${c} ESG CO2削減 サステナビリティ`, `${c} カーボンニュートラル`],
+  logistics_flow:    (c) => [`${c} 物流フロー 入荷 出荷 保管`, `${c} サプライチェーン 物流`],
+  product_features:  (c) => [`${c} 取扱品 商品特性 温度管理`, `${c} 商品カテゴリ`],
+  existing_systems:  (c) => [`${c} WMS TMS ERP システム`, `${c} 基幹システム IT`],
+  org_structure:     (c) => [`${c} 組織図 物流部門 SCM`, `${c} 部署構成`],
+  recent_news:       (c) => [`${c} プレスリリース ニュース 2025`, `${c} IR 新着 2024 2025`],
+};
+
+const PROMPTS = {
+  company_overview:  (c) => `"${c}"の会社概要（設立・本社・従業員数・上場区分）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  business_products: (c) => `"${c}"の事業領域・主力商材。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  group_structure:   (c) => `"${c}"のグループ構造。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  bases_network:     (c) => `"${c}"の拠点・物流ネットワーク。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  market_share:      (c, ind) => `"${c}"の${ind?`${ind}業界における`:""}業界シェア・市場ポジション。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  pl_summary:        (c) => `"${c}"の直近3期の売上・営業利益・率。${FACT_ONLY} JSONのみ: {"summary":"3文以内","revenue":"売上高","growth":"成長率","margin":"営業利益率","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  growth_profit:     (c) => `"${c}"の成長性・収益性トレンド。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  financial_health:  (c) => `"${c}"の財務健全性。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  capex:             (c) => `"${c}"の設備投資・CAPEX・DX予算動向。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  mid_term_plan:     (c) => `"${c}"の中期経営計画（KPI・重点施策）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  dx_strategy:       (c) => `"${c}"のDX・自動化戦略。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  sustainability:    (c) => `"${c}"のESG・CO2削減・サステナビリティ方針。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  logistics_flow:    (c) => `"${c}"の物流フロー概要。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  product_features:  (c) => `"${c}"が扱う商品の特性。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  existing_systems:  (c) => `"${c}"が使用するWMS・TMS・ERP等の既存システム。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  org_structure:     (c) => `"${c}"の物流・DX系部署の組織構成。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  recent_news:       (c) => `"${c}"の直近1年のニュース・IR・プレスリリース。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+};
+
+// 品質最優先の多段階調査
+async function deepResearchPremium(company, itemId, prompt, industry) {
+  const collectedTexts = [];
+  const collectedUrls = [];
+
+  // Phase1: ドメイン推定→複数URLを直接fetch（web_searchなし）
+  const domain = guessDomain(company);
+  if (domain) {
+    const urlPatterns = URL_PATTERNS[itemId]?.(domain) || [`https://${domain}`];
+    for (const url of urlPatterns.slice(0, 3)) {
+      const { text } = await fetchUrl(url);
+      if (text.length > 300) {
+        collectedTexts.push(`【${url}】\n${text.slice(0, 3000)}`);
+        collectedUrls.push(url);
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+
+  // Phase2: web_search 1回目 → URLを特定してfetch
+  await new Promise(r => setTimeout(r, 3000));
+  const queries = SEARCH_QUERIES[itemId]?.(company, industry) || [`${company} ${itemId}`];
+  try {
+    const search1Raw = await callClaude(
+      `あなたは企業調査AIです。検索して最も信頼性の高い公式情報ページのURLを特定し、その内容を要約してください。`,
+      `「${queries[0]}」で検索し、最も信頼性の高い公式情報を取得してください。
+以下の形式で返答：
+URL: [参照したURL]
+内容: [取得した情報の要約（500文字以内）]`
+    );
+    if (search1Raw.length > 50) {
+      collectedTexts.push(`【Web検索1回目】\n${search1Raw.slice(0, 2000)}`);
+      const urlMatch = search1Raw.match(/URL:\s*(https?:\/\/[^\s\n]+)/);
+      if (urlMatch) collectedUrls.push(urlMatch[1]);
+
+      // 取得したURLをfetchで深読み
+      if (urlMatch?.[1]) {
+        await new Promise(r => setTimeout(r, 1000));
+        const { text: deepText } = await fetchUrl(urlMatch[1]);
+        if (deepText.length > 300) {
+          collectedTexts.push(`【${urlMatch[1]} 詳細】\n${deepText.slice(0, 3000)}`);
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Phase3: web_search 2回目 → 補完情報・最新データ
+  await new Promise(r => setTimeout(r, 5000));
+  if (queries.length > 1) {
+    try {
+      const search2Raw = await callClaude(
+        `あなたは企業調査AIです。検索して補完情報・最新データを取得してください。`,
+        `「${queries[1]}」で検索し、最新の情報・数値データを取得してください。
+以下の形式で返答：
+URL: [参照したURL]
+内容: [取得した情報の要約（500文字以内）]`
+      );
+      if (search2Raw.length > 50) {
+        collectedTexts.push(`【Web検索2回目】\n${search2Raw.slice(0, 2000)}`);
+        const urlMatch2 = search2Raw.match(/URL:\s*(https?:\/\/[^\s\n]+)/);
+        if (urlMatch2) collectedUrls.push(urlMatch2[1]);
+      }
+    } catch (_) {}
+  }
+
+  // Phase4: 全情報を統合してClaude解析（web_searchなし）
+  await new Promise(r => setTimeout(r, 2000));
+  const allInfo = collectedTexts.join("\n\n---\n\n");
+  const sourceUrls = [...new Set(collectedUrls)].slice(0, 3).join(", ");
+
+  const finalPrompt = allInfo.length > 200
+    ? `${prompt}\n\n以下は複数の公式情報源から収集した情報です。これらを総合して、事実のみを記載してください。source_urlには「${sourceUrls}」を記載してください：\n\n${allInfo.slice(0, 8000)}`
+    : `${prompt}\n\nsource_urlには参照したURLを記載してください。情報が見つからない場合はstatusをunconfirmedにしてください。`;
+
+  const finalRaw = await callClaudeNoSearch(
+    `あなたはB2B営業支援AIです。収集した複数の公式情報源を総合分析し、JSONのみ返答。
+【厳守ルール】
+- 収集した公式情報に記載された事実のみ記載する
+- 推測・類推・一般論は一切書かない
+- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載
+- missingには「訪問時に直接確認すべき具体的な質問」を書く
+- source_urlには実際に参照したURLを記載する
+- 前置き・マークダウン不要。JSONのみ返答。`,
+    finalPrompt
+  );
+
+  return finalRaw;
+}
+
 function WarehouseProgress({ done, total, current }) {
   const pct = total > 0 ? done / total : 0;
-  const remaining = (total - done) * 30;
+  const remaining = (total - done) * 60;
   const mins = Math.floor(remaining / 60);
   const secs = remaining % 60;
-  const timeStr = mins > 0 ? `約${mins}分${secs > 0 ? secs + "秒" : ""}` : `約${secs}秒`;
+  const timeStr = mins > 0 ? `約${mins}分` : `約${secs}秒`;
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 100);
@@ -210,8 +336,7 @@ function WarehouseProgress({ done, total, current }) {
   }, []);
 
   const cycle = tick % 200;
-  const CONV_END = 80;
-  const ARM_END = 140;
+  const CONV_END = 80, ARM_END = 140;
   const boxConvX = cycle < CONV_END ? 15 + (cycle / CONV_END) * 100 : 115;
   const boxOnConv = cycle < CONV_END;
   const armPhase = cycle >= CONV_END && cycle < ARM_END ? (cycle - CONV_END) / (ARM_END - CONV_END) : 0;
@@ -233,8 +358,8 @@ function WarehouseProgress({ done, total, current }) {
         <rect x="0" y="65" width="300" height="17" fill="#e2e8f0" />
         <rect x="0" y="63" width="300" height="3" fill="#cbd5e1" />
         <rect x="8" y="50" width="120" height="14" rx="3" fill="#334155" />
-        <clipPath id="wbc3"><rect x="8" y="50" width="120" height="14" /></clipPath>
-        <g clipPath="url(#wbc3)">
+        <clipPath id="wbc4"><rect x="8" y="50" width="120" height="14" /></clipPath>
+        <g clipPath="url(#wbc4)">
           {Array.from({ length: 9 }).map((_, i) => (
             <line key={i} x1={8+((i*16-beltOffset+120)%120)} y1="50" x2={8+((i*16-beltOffset+120)%120)} y2="64" stroke="#475569" strokeWidth="1.5" />
           ))}
@@ -255,8 +380,8 @@ function WarehouseProgress({ done, total, current }) {
           <rect x="-3" y="4" width="6" height={20+armDown*16} rx="2" fill="#334155" />
           <g transform={`translate(0, ${24+armDown*16})`}>
             <rect x="-6" y="0" width="12" height="4" rx="1" fill="#1e293b" />
-            <rect x={armGripping ? -7 : -9} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
-            <rect x={armGripping ? 2 : 4} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
+            <rect x={armGripping?-7:-9} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
+            <rect x={armGripping?2:4} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
             {boxOnArm && (
               <g transform="translate(-7, 9)">
                 <rect x="0" y="0" width="14" height="11" rx="2" fill="#f59e0b" stroke="#d97706" strokeWidth="0.6" />
@@ -272,7 +397,7 @@ function WarehouseProgress({ done, total, current }) {
         <rect x="179" y="54" width="42" height="5" rx="1" fill="#78350f" />
         {[180,193,206,219].map(x => <rect key={x} x={x} y="63" width="4" height="2" fill="#78350f" />)}
         {Array.from({ length: Math.min(done, 8) }).map((_, i) => {
-          const col = i % 4, row = Math.floor(i / 4);
+          const col = i%4, row = Math.floor(i/4);
           return (
             <g key={i}>
               <rect x={180+col*10} y={46-row*11} width="9" height="9" rx="1" fill="#f59e0b" stroke="#d97706" strokeWidth="0.5" />
@@ -369,10 +494,7 @@ function ResultCard({ item, result }) {
   const cfg = STATUS[st];
   const borderColor = st==="unconfirmed"?"#fecaca":st==="partial"?"#fde68a":"#e5e7eb";
   const headerBg = st==="unconfirmed"?"#fff5f5":st==="partial"?"#fffdf0":"#fafafa";
-
-  const sourceHost = result?.source_url ? (() => {
-    try { return new URL(result.source_url).hostname; } catch { return result.source_url; }
-  })() : null;
+  const sourceUrls = result?.source_url ? result.source_url.split(",").map(u => u.trim()).filter(u => u.startsWith("http")) : [];
 
   return (
     <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, marginBottom: 8, overflow: "hidden", background: "#fff" }}>
@@ -395,13 +517,21 @@ function ResultCard({ item, result }) {
               <span style={{ fontSize: 12, color: cfg.color, lineHeight: 1.6 }}>{result.missing}</span>
             </div>
           )}
-          {sourceHost && (
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5 }}>
-              <span style={{ fontSize: 10, color: "#9ca3af" }}>📎 参照：</span>
-              <a href={result.source_url} target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 10, color: "#3b82f6", textDecoration: "none", wordBreak: "break-all" }}>
-                {sourceHost}
-              </a>
+          {sourceUrls.length > 0 && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 5, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0, marginTop: 2 }}>📎 参照：</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {sourceUrls.map((url, i) => {
+                  let host = url;
+                  try { host = new URL(url).hostname; } catch {}
+                  return (
+                    <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 10, color: "#3b82f6", textDecoration: "none" }}>
+                      {host}
+                    </a>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -488,7 +618,7 @@ export default function App() {
     if (hasPrior) {
       setProgress({ done: 0, total: items.length + 1, current: "事前情報を整理中" });
       try {
-        const parseRaw = await callClaude(
+        const parseRaw = await callClaudeNoSearch(
           `あなたはB2B営業支援AIです。貼り付けられたヒアリングメモ・事前情報を整理しJSONのみ返答。前置き不要。`,
           `以下は"${confirmedCompany}"に関する事前情報です。\n---\n${priorInfo}\n---\nJSONのみ: {"summary":"全体サマリー3〜4文","key_points":["重要ポイント1","重要ポイント2"],"known_challenges":"判明している課題・ニーズ","known_contacts":"判明している担当者情報","known_systems":"判明しているシステム環境","other":"その他有用情報"}`
         );
@@ -507,18 +637,18 @@ export default function App() {
       try {
         const base = item.id === "market_share"
           ? PROMPTS.market_share(confirmedCompany, industry)
-          : (PROMPTS[item.id]?.(confirmedCompany) || `"${confirmedCompany}"について「${item.label}」を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報","source_url":"参照URL"}`);
+          : (PROMPTS[item.id]?.(confirmedCompany) || `"${confirmedCompany}"について「${item.label}」を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`);
         const prompt = priorContext
           ? base + priorContext + "\n※事前情報に記載された内容はそのままsummaryに含めてよい。推測は書かない。"
           : base;
-        const raw = await deepResearchPerItem(confirmedCompany, item.id, prompt, industry);
+        const raw = await deepResearchPremium(confirmedCompany, item.id, prompt, industry);
         const parsed = extractJSON(raw);
         newResults[item.id] = parsed || { summary: raw.slice(0, 200), status: "partial", missing: "", source_url: "" };
       } catch {
         newResults[item.id] = { summary: "取得できませんでした。", status: "unconfirmed", missing: "デスクトップリサーチでは確認不可。訪問時に直接確認が必要です。", source_url: "" };
       }
       setResults({ ...newResults });
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 15000)); // 15秒待機
     }
     setProgress(p => ({ ...p, done: p.total, current: "" }));
     setAppStatus("done");
