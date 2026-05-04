@@ -94,7 +94,7 @@ async function callClaude(system, user) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-5",
-      max_tokens: 1000,
+      max_tokens: 1500,
       system,
       messages: [{ role: "user", content: user }],
       tools: [{ type: "web_search_20250305", name: "web_search" }],
@@ -103,6 +103,88 @@ async function callClaude(system, user) {
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
   return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+}
+
+async function fetchUrl(url) {
+  try {
+    const res = await fetch("/api/fetch-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    return data.text || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+async function findCompanyUrls(company) {
+  try {
+    const raw = await callClaude(
+      `あなたは企業調査AIです。企業の公式URL・IRページURLを特定してください。JSONのみ返答。実在するURLのみ記載。`,
+      `「${company}」の以下のURLをWeb検索で特定してください。
+JSONのみ: {
+  "official": "公式サイトトップURL",
+  "ir": "IR・投資家情報ページURL",
+  "news": "プレスリリース・ニュースリリースページURL",
+  "annual_report": "有価証券報告書または統合報告書のページURL"
+}
+不明な場合は空文字。推測URL禁止。必ずWeb検索で確認したURLのみ。`
+    );
+    return extractJSON(raw) || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function deepResearch(company, itemId, prompt, urls) {
+  const urlMap = {
+    pl_summary:        [urls.ir, urls.annual_report],
+    growth_profit:     [urls.ir, urls.annual_report],
+    financial_health:  [urls.ir, urls.annual_report],
+    capex:             [urls.ir, urls.annual_report],
+    mid_term_plan:     [urls.ir, urls.official],
+    dx_strategy:       [urls.news, urls.official],
+    sustainability:    [urls.official, urls.ir],
+    recent_news:       [urls.news, urls.official],
+    company_overview:  [urls.official],
+    business_products: [urls.official],
+    group_structure:   [urls.official],
+    bases_network:     [urls.official],
+    market_share:      [urls.official, urls.ir],
+    logistics_flow:    [urls.official],
+    product_features:  [urls.official],
+    existing_systems:  [urls.official, urls.news],
+    org_structure:     [urls.official],
+  };
+
+  const targetUrls = (urlMap[itemId] || [urls.official]).filter(Boolean);
+
+  let fetchedText = "";
+  for (const url of targetUrls) {
+    if (!url) continue;
+    const text = await fetchUrl(url);
+    if (text.length > 200) {
+      fetchedText += `\n\n【${url} から取得した公式情報】\n${text.slice(0, 4000)}`;
+      break;
+    }
+  }
+
+  const enhancedPrompt = fetchedText
+    ? `${prompt}\n\n以下は公式ページから直接取得した情報です。この情報を最優先で使用してください：\n${fetchedText}`
+    : prompt;
+
+  return await callClaude(
+    `あなたはB2B営業支援AIです。提供された公式ページの情報を最優先で使用し、JSONのみ返答。
+【厳守ルール】
+- 提供された公式情報に記載された事実のみ記載する
+- 推測・類推・一般論は一切書かない
+- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載
+- missingには「訪問時に直接確認すべき具体的な質問」を書く
+- 前置き・マークダウン不要。JSONのみ返答。`,
+    enhancedPrompt
+  );
 }
 
 function extractJSON(text) {
@@ -114,43 +196,28 @@ function extractJSON(text) {
   return null;
 }
 
-// 倉庫アニメーション - 1項目=1段ボールがゆっくり流れる
 function WarehouseProgress({ done, total, current }) {
   const pct = total > 0 ? done / total : 0;
-  const remaining = (total - done) * 5;
+  const remaining = (total - done) * 15;
   const mins = Math.floor(remaining / 60);
   const secs = remaining % 60;
   const timeStr = mins > 0 ? `約${mins}分${secs > 0 ? secs + "秒" : ""}` : `約${secs}秒`;
-
-  // tick: 100msごとに進む。1サイクル=200tick(20秒)で1段ボールの旅
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 100);
     return () => clearInterval(id);
   }, []);
 
-  // 1サイクル200tick: 0-80コンベア移動, 80-140アーム掴む, 140-200パレットへ
   const cycle = tick % 200;
   const CONV_END = 80;
   const ARM_END = 140;
-
-  // 段ボールのコンベア上X座標 (0-80tick: 左端→右端)
   const boxConvX = cycle < CONV_END ? 15 + (cycle / CONV_END) * 100 : 115;
   const boxOnConv = cycle < CONV_END;
-
-  // アーム動作 (80-140)
   const armPhase = cycle >= CONV_END && cycle < ARM_END ? (cycle - CONV_END) / (ARM_END - CONV_END) : 0;
-  const armDown = Math.sin(armPhase * Math.PI); // 0→1→0
+  const armDown = Math.sin(armPhase * Math.PI);
   const armGripping = armPhase > 0.3 && armPhase < 0.85;
   const boxOnArm = armPhase > 0.35 && armPhase < 0.9;
-
-  // パレットへ積まれた数 (140-200で+1)
-  const paletteCount = done; // 完了数=パレット上の箱数
-
-  // フォークリフト位置
   const forkX = 30 + pct * 155;
-
-  // ベルトの動きライン
   const beltOffset = (tick * 1.5) % 20;
 
   return (
@@ -161,28 +228,19 @@ function WarehouseProgress({ done, total, current }) {
         </span>
         <span style={{ fontSize: 11, color: "#94a3b8" }}>{done}/{total}</span>
       </div>
-
       <svg viewBox="0 0 300 82" width="100%" style={{ display: "block", background: "#f1f5f9", borderRadius: 8 }}>
-        {/* 床 */}
         <rect x="0" y="65" width="300" height="17" fill="#e2e8f0" />
         <rect x="0" y="63" width="300" height="3" fill="#cbd5e1" />
-
-        {/* コンベアベルト */}
         <rect x="8" y="50" width="120" height="14" rx="3" fill="#334155" />
-        <clipPath id="wbc2"><rect x="8" y="50" width="120" height="14" /></clipPath>
-        <g clipPath="url(#wbc2)">
+        <clipPath id="wbc3"><rect x="8" y="50" width="120" height="14" /></clipPath>
+        <g clipPath="url(#wbc3)">
           {Array.from({ length: 9 }).map((_, i) => (
-            <line key={i}
-              x1={8 + ((i * 16 - beltOffset + 120) % 120)}
-              y1="50" x2={8 + ((i * 16 - beltOffset + 120) % 120)} y2="64"
-              stroke="#475569" strokeWidth="1.5" />
+            <line key={i} x1={8+((i*16-beltOffset+120)%120)} y1="50" x2={8+((i*16-beltOffset+120)%120)} y2="64" stroke="#475569" strokeWidth="1.5" />
           ))}
         </g>
         <rect x="8" y="50" width="120" height="14" rx="3" fill="none" stroke="#475569" strokeWidth="1" />
         <circle cx="11" cy="57" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" />
         <circle cx="125" cy="57" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" />
-
-        {/* コンベア上の段ボール（1個がゆっくり流れる） */}
         {boxOnConv && (
           <g>
             <rect x={boxConvX} y="40" width="16" height="12" rx="2" fill="#f59e0b" stroke="#d97706" strokeWidth="0.8" />
@@ -190,21 +248,14 @@ function WarehouseProgress({ done, total, current }) {
             <line x1={boxConvX+8} y1="40" x2={boxConvX+8} y2="52" stroke="#92400e" strokeWidth="0.8" />
           </g>
         )}
-
-        {/* ロボットアーム */}
         <g transform="translate(145, 8)">
-          {/* 天井レール */}
           <rect x="-10" y="0" width="20" height="5" rx="2" fill="#475569" />
           <rect x="-4" y="-3" width="8" height="5" rx="1" fill="#64748b" />
-          {/* アーム本体（下方向に伸びる） */}
-          <rect x="-3" y="4" width="6" height={20 + armDown * 16} rx="2" fill="#334155" />
-          {/* アーム先端 */}
-          <g transform={`translate(0, ${24 + armDown * 16})`}>
+          <rect x="-3" y="4" width="6" height={20+armDown*16} rx="2" fill="#334155" />
+          <g transform={`translate(0, ${24+armDown*16})`}>
             <rect x="-6" y="0" width="12" height="4" rx="1" fill="#1e293b" />
-            {/* グリッパー */}
             <rect x={armGripping ? -7 : -9} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
             <rect x={armGripping ? 2 : 4} y="3" width="5" height="8" rx="1" fill="#94a3b8" />
-            {/* 掴んでいる箱 */}
             {boxOnArm && (
               <g transform="translate(-7, 9)">
                 <rect x="0" y="0" width="14" height="11" rx="2" fill="#f59e0b" stroke="#d97706" strokeWidth="0.6" />
@@ -213,30 +264,21 @@ function WarehouseProgress({ done, total, current }) {
               </g>
             )}
           </g>
-          {/* モーター */}
           <rect x="-10" y="3" width="7" height="9" rx="2" fill="#1e3a8a" />
           <circle cx="-6" cy="7" r="2.5" fill="#3b82f6" />
         </g>
-
-        {/* パレット */}
         <rect x="175" y="58" width="50" height="6" rx="1" fill="#92400e" />
         <rect x="179" y="54" width="42" height="5" rx="1" fill="#78350f" />
-        {[180, 193, 206, 219].map(x => (
-          <rect key={x} x={x} y="63" width="4" height="2" fill="#78350f" />
-        ))}
-        {/* パレット上の箱（完了数分） */}
-        {Array.from({ length: Math.min(paletteCount, 8) }).map((_, i) => {
-          const col = i % 4;
-          const row = Math.floor(i / 4);
+        {[180,193,206,219].map(x => <rect key={x} x={x} y="63" width="4" height="2" fill="#78350f" />)}
+        {Array.from({ length: Math.min(done, 8) }).map((_, i) => {
+          const col = i % 4, row = Math.floor(i / 4);
           return (
             <g key={i}>
-              <rect x={180 + col * 10} y={46 - row * 11} width="9" height="9" rx="1" fill="#f59e0b" stroke="#d97706" strokeWidth="0.5" />
+              <rect x={180+col*10} y={46-row*11} width="9" height="9" rx="1" fill="#f59e0b" stroke="#d97706" strokeWidth="0.5" />
               <line x1={181+col*10} y1={49-row*11} x2={188+col*10} y2={49-row*11} stroke="#92400e" strokeWidth="0.6" />
             </g>
           );
         })}
-
-        {/* 自動フォークリフト */}
         <g transform={`translate(${forkX}, 28)`}>
           <rect x="14" y="-2" width="4" height="30" rx="1" fill="#1e40af" />
           <rect x="17" y="20" width="22" height="2.5" rx="1" fill="#93c5fd" />
@@ -253,19 +295,16 @@ function WarehouseProgress({ done, total, current }) {
           <ellipse cx="-8" cy="29" rx="2.5" ry="2" fill="#334155" />
           <ellipse cx="-1" cy="7" rx="3" ry="3" fill="#1e3a8a" />
         </g>
-
-        {/* ゴール */}
         <rect x="258" y="40" width="38" height="25" rx="2" fill="#f0fdf4" stroke="#86efac" strokeWidth="1" strokeDasharray="3,2" />
         <text x="277" y="53" fontSize="7" fill="#16a34a" textAnchor="middle" fontWeight="600">GOAL</text>
         <text x="277" y="62" fontSize="6" fill="#22c55e" textAnchor="middle">出荷済</text>
       </svg>
-
       <div style={{ background: "#e2e8f0", borderRadius: 99, height: 5, overflow: "hidden", marginTop: 8 }}>
-        <div style={{ height: "100%", width: `${Math.round(pct * 100)}%`, background: "linear-gradient(90deg, #2563eb, #22c55e)", transition: "width .5s", borderRadius: 99 }} />
+        <div style={{ height: "100%", width: `${Math.round(pct*100)}%`, background: "linear-gradient(90deg,#2563eb,#22c55e)", transition: "width .5s", borderRadius: 99 }} />
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
         <span style={{ fontSize: 10, color: "#64748b" }}>残り{timeStr}</span>
-        <span style={{ fontSize: 10, color: "#475569", fontWeight: 600 }}>{Math.round(pct * 100)}%</span>
+        <span style={{ fontSize: 10, color: "#475569", fontWeight: 600 }}>{Math.round(pct*100)}%</span>
       </div>
     </div>
   );
@@ -276,7 +315,6 @@ function CompanyModal({ company, candidates, onConfirm }) {
   const [custom, setCustom] = useState("");
   const isOther = selected === "__other__";
   const finalName = isOther ? custom : selected;
-
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
       <div style={{ background: "#fff", borderRadius: 14, padding: "24px", width: 380, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
@@ -284,12 +322,12 @@ function CompanyModal({ company, candidates, onConfirm }) {
         <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 16 }}>「{company}」に該当する企業候補：</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           {candidates.map(c => (
-            <label key={c} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${selected === c ? "#1e3a8a" : "#e5e7eb"}`, background: selected === c ? "#eff6ff" : "#fff", cursor: "pointer" }}>
-              <input type="radio" name="company" value={c} checked={selected === c} onChange={() => setSelected(c)} style={{ accentColor: "#1e3a8a" }} />
-              <span style={{ fontSize: 13, color: "#111827", fontWeight: selected === c ? 600 : 400 }}>{c}</span>
+            <label key={c} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${selected===c?"#1e3a8a":"#e5e7eb"}`, background: selected===c?"#eff6ff":"#fff", cursor: "pointer" }}>
+              <input type="radio" name="company" value={c} checked={selected===c} onChange={() => setSelected(c)} style={{ accentColor: "#1e3a8a" }} />
+              <span style={{ fontSize: 13, color: "#111827", fontWeight: selected===c?600:400 }}>{c}</span>
             </label>
           ))}
-          <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${isOther ? "#1e3a8a" : "#e5e7eb"}`, background: isOther ? "#eff6ff" : "#fff", cursor: "pointer" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${isOther?"#1e3a8a":"#e5e7eb"}`, background: isOther?"#eff6ff":"#fff", cursor: "pointer" }}>
             <input type="radio" name="company" value="__other__" checked={isOther} onChange={() => setSelected("__other__")} style={{ accentColor: "#1e3a8a" }} />
             <span style={{ fontSize: 13, color: "#111827" }}>その他</span>
           </label>
@@ -299,7 +337,7 @@ function CompanyModal({ company, candidates, onConfirm }) {
           )}
         </div>
         <button onClick={() => finalName.trim() && onConfirm(finalName.trim())} disabled={!finalName.trim()}
-          style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, background: finalName.trim() ? "#1e3a8a" : "#d1d5db", color: "#fff", border: "none", borderRadius: 8, cursor: finalName.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          style={{ width: "100%", padding: "11px", fontSize: 13, fontWeight: 700, background: finalName.trim()?"#1e3a8a":"#d1d5db", color: "#fff", border: "none", borderRadius: 8, cursor: finalName.trim()?"pointer":"not-allowed", fontFamily: "inherit" }}>
           確定してリサーチ開始
         </button>
       </div>
@@ -311,13 +349,13 @@ function StatusBadge({ status, size = "sm" }) {
   if (!status) return null;
   const cfg = STATUS[status] || STATUS.unconfirmed;
   return (
-    <span style={{ fontSize: size === "lg" ? 12 : 10, fontWeight: 600, color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`, padding: size === "lg" ? "3px 9px" : "1px 6px", borderRadius: 99, whiteSpace: "nowrap", flexShrink: 0 }}>{cfg.label}</span>
+    <span style={{ fontSize: size==="lg"?12:10, fontWeight: 600, color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`, padding: size==="lg"?"3px 9px":"1px 6px", borderRadius: 99, whiteSpace: "nowrap", flexShrink: 0 }}>{cfg.label}</span>
   );
 }
 
 function Checkbox({ checked, color, indeterminate }) {
   return (
-    <div style={{ width: 14, height: 14, borderRadius: 3, flexShrink: 0, marginTop: 1, border: `1.5px solid ${checked || indeterminate ? color : "#d1d5db"}`, background: checked ? color : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ width: 14, height: 14, borderRadius: 3, flexShrink: 0, marginTop: 1, border: `1.5px solid ${checked||indeterminate?color:"#d1d5db"}`, background: checked?color:"transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
       {checked && <span style={{ fontSize: 9, color: "#fff", fontWeight: 700, lineHeight: 1 }}>✓</span>}
       {indeterminate && !checked && <div style={{ width: 6, height: 2, background: color, borderRadius: 1 }} />}
     </div>
@@ -328,22 +366,22 @@ function ResultCard({ item, result }) {
   const [open, setOpen] = useState(true);
   const st = result?.status || "unconfirmed";
   const cfg = STATUS[st];
-  const borderColor = st === "unconfirmed" ? "#fecaca" : st === "partial" ? "#fde68a" : "#e5e7eb";
-  const headerBg = st === "unconfirmed" ? "#fff5f5" : st === "partial" ? "#fffdf0" : "#fafafa";
+  const borderColor = st==="unconfirmed"?"#fecaca":st==="partial"?"#fde68a":"#e5e7eb";
+  const headerBg = st==="unconfirmed"?"#fff5f5":st==="partial"?"#fffdf0":"#fafafa";
   return (
     <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, marginBottom: 8, overflow: "hidden", background: "#fff" }}>
       <div onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", cursor: "pointer", background: headerBg }}>
         <div style={{ width: 3, height: 14, background: cfg.color, borderRadius: 2, flexShrink: 0 }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: "#111827", flex: 1 }}>{item.label}</span>
         <StatusBadge status={st} />
-        <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 4 }}>{open ? "▲" : "▼"}</span>
+        <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 4 }}>{open?"▲":"▼"}</span>
       </div>
       {open && (
         <div style={{ padding: "10px 14px 12px", borderTop: `1px solid ${cfg.border}` }}>
           <p style={{ margin: "0 0 8px", fontSize: 13, color: "#374151", lineHeight: 1.85 }}>{result?.summary || "情報を取得できませんでした。"}</p>
-          {result?.missing && st !== "confirmed" && (
+          {result?.missing && st!=="confirmed" && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 7, background: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: 7, padding: "7px 11px", marginTop: 6 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, whiteSpace: "nowrap", marginTop: 1 }}>{st === "unconfirmed" ? "⚠ 要ヒアリング" : "△ 要確認"}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, whiteSpace: "nowrap", marginTop: 1 }}>{st==="unconfirmed"?"⚠ 要ヒアリング":"△ 要確認"}</span>
               <span style={{ fontSize: 12, color: cfg.color, lineHeight: 1.6 }}>{result.missing}</span>
             </div>
           )}
@@ -375,27 +413,26 @@ export default function App() {
     return industrySelect;
   };
 
-  // 現在の選択がプリセットと一致するか判定
   const activePreset = PRESETS.findIndex(p => {
     if (p.ids.size !== selected.size) return false;
     for (const id of p.ids) if (!selected.has(id)) return false;
     return true;
   });
 
-  const toggle = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id) => setSelected(s => { const n = new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
   const toggleCat = (cat) => {
     const ids = cat.items.map(i => i.id);
     const allOn = ids.every(id => selected.has(id));
-    setSelected(s => { const n = new Set(s); ids.forEach(id => allOn ? n.delete(id) : n.add(id)); return n; });
+    setSelected(s => { const n = new Set(s); ids.forEach(id => allOn?n.delete(id):n.add(id)); return n; });
   };
   const applyPreset = (preset) => setSelected(new Set(preset.ids));
 
   const statusCounts = Object.values(results).reduce((acc, r) => {
-    const k = r?.status || "unconfirmed"; acc[k] = (acc[k] || 0) + 1; return acc;
+    const k = r?.status||"unconfirmed"; acc[k]=(acc[k]||0)+1; return acc;
   }, {});
 
-  const hearingItems = ALL_ITEMS.filter(i => selected.has(i.id) && results[i.id]?.status === "unconfirmed");
-  const partialItems = ALL_ITEMS.filter(i => selected.has(i.id) && results[i.id]?.status === "partial");
+  const hearingItems = ALL_ITEMS.filter(i => selected.has(i.id) && results[i.id]?.status==="unconfirmed");
+  const partialItems = ALL_ITEMS.filter(i => selected.has(i.id) && results[i.id]?.status==="partial");
 
   const checkCompany = async (name) => {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -426,19 +463,23 @@ export default function App() {
     const items = ALL_ITEMS.filter(i => selected.has(i.id));
     const hasPrior = priorInfo.trim().length > 0;
     const industry = getIndustry();
-    setProgress({ done: 0, total: items.length + (hasPrior ? 1 : 0), current: "" });
+    setProgress({ done: 0, total: items.length + (hasPrior ? 1 : 0) + 1, current: "公式URLを特定中" });
 
-    const SYSTEM = `あなたはB2B営業支援AIです。Web検索で企業の公開情報を調査しJSONのみ返答。
+    const SYSTEM = `あなたはB2B営業支援AIです。提供された公式ページの情報を最優先で使用し、JSONのみ返答。
 【厳守ルール】
-- summaryにはWeb上で実際に確認できた事実のみを記載する
+- 提供された公式情報に記載された事実のみ記載する
 - 推測・類推・一般論は一切書かない
-- 情報が見つからない場合はstatusをunconfirmedにし、summaryには「公開情報なし」と記載する
+- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載
 - missingには「訪問時に直接確認すべき具体的な質問」を書く
 - 前置き・マークダウン不要。JSONのみ返答。`;
 
+    // Step1: 企業URLを特定
+    const urls = await findCompanyUrls(confirmedCompany);
+    setProgress({ done: 1, total: items.length + (hasPrior ? 1 : 0) + 1, current: "" });
+
     let priorContext = "";
     if (hasPrior) {
-      setProgress({ done: 0, total: items.length + 1, current: "事前情報を整理中" });
+      setProgress(p => ({ ...p, current: "事前情報を整理中" }));
       try {
         const parseRaw = await callClaude(
           `あなたはB2B営業支援AIです。貼り付けられたヒアリングメモ・事前情報を整理しJSONのみ返答。前置き不要。`,
@@ -447,11 +488,11 @@ export default function App() {
         const pp = extractJSON(parseRaw);
         if (pp) { setParsedPrior(pp); priorContext = "\n\n【事前情報】" + JSON.stringify(pp); }
       } catch (_) {}
-      setProgress({ done: 1, total: items.length + 1, current: "" });
+      setProgress(p => ({ ...p, done: p.done + 1, current: "" }));
     }
 
     const newResults = {};
-    const offset = hasPrior ? 1 : 0;
+    const offset = (hasPrior ? 1 : 0) + 1;
     for (let i = 0; i < items.length; i++) {
       if (abortRef.current) break;
       const item = items[i];
@@ -461,7 +502,9 @@ export default function App() {
           ? PROMPTS.market_share(confirmedCompany, industry)
           : (PROMPTS[item.id]?.(confirmedCompany) || `"${confirmedCompany}"について「${item.label}」を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"不足情報"}`);
         const prompt = priorContext ? base + priorContext + "\n※事前情報に記載された内容はそのままsummaryに含めてよい。推測は書かない。" : base;
-        const raw = await callClaude(SYSTEM, prompt);
+
+        // Step2+3: URL fetch → Claude解析
+        const raw = await deepResearch(confirmedCompany, item.id, prompt, urls);
         const parsed = extractJSON(raw);
         newResults[item.id] = parsed || { summary: raw.slice(0, 200), status: "partial", missing: "" };
       } catch {
@@ -505,8 +548,8 @@ export default function App() {
       <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 3 }}>{label}</div>
       <input type="text" value={val} onChange={e => setter(e.target.value)} placeholder={ph}
         style={{ width: "100%", padding: "7px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none" }}
-        onFocus={e => e.target.style.borderColor = "#1e3a8a"}
-        onBlur={e => e.target.style.borderColor = "#e5e7eb"} />
+        onFocus={e => e.target.style.borderColor="#1e3a8a"}
+        onBlur={e => e.target.style.borderColor="#e5e7eb"} />
     </div>
   );
 
@@ -531,11 +574,11 @@ export default function App() {
             <div style={{ marginBottom: 7 }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 3 }}>顧客企業名 *</div>
               <input type="text" value={company} onChange={e => setCompany(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && !isLoading && company.trim() && selected.size && handleStart()}
+                onKeyDown={e => e.key==="Enter" && !isLoading && company.trim() && selected.size && handleStart()}
                 placeholder="例：ニチレイロジグループ株式会社"
                 style={{ width: "100%", padding: "7px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none" }}
-                onFocus={e => e.target.style.borderColor = "#1e3a8a"}
-                onBlur={e => e.target.style.borderColor = "#e5e7eb"} />
+                onFocus={e => e.target.style.borderColor="#1e3a8a"}
+                onBlur={e => e.target.style.borderColor="#e5e7eb"} />
             </div>
             {inp("担当者部署", dept, setDept, "例：物流部・SCM部")}
 
@@ -549,8 +592,8 @@ export default function App() {
               placeholder={"例：\n・担当の山田部長から「WMS刷新を検討中」と聞いた\n・現状はExcel管理でミスが多い"}
               rows={4}
               style={{ width: "100%", padding: "8px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none", resize: "vertical", lineHeight: 1.6 }}
-              onFocus={e => e.target.style.borderColor = "#1e3a8a"}
-              onBlur={e => e.target.style.borderColor = "#e5e7eb"} />
+              onFocus={e => e.target.style.borderColor="#1e3a8a"}
+              onBlur={e => e.target.style.borderColor="#e5e7eb"} />
             {priorInfo.trim() && <div style={{ fontSize: 11, color: "#15803d", marginBottom: 4, marginTop: 3 }}>✓ 事前情報あり — リサーチ時に自動反映します</div>}
 
             <div style={{ height: 1, background: "#f3f4f6", margin: "10px 0" }} />
@@ -559,24 +602,24 @@ export default function App() {
               <div style={{ width: 3, height: 11, background: "#1e3a8a", borderRadius: 2 }} />業界シェアの調査軸
             </div>
             <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
-              {["auto", "specify"].map(mode => (
+              {["auto","specify"].map(mode => (
                 <label key={mode} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12 }}>
-                  <input type="radio" name="industryMode" value={mode} checked={industryMode === mode} onChange={() => setIndustryMode(mode)} />
-                  {mode === "auto" ? "おまかせ" : "指定する"}
+                  <input type="radio" name="industryMode" value={mode} checked={industryMode===mode} onChange={() => setIndustryMode(mode)} />
+                  {mode==="auto"?"おまかせ":"指定する"}
                 </label>
               ))}
             </div>
-            {industryMode === "specify" && (
+            {industryMode==="specify" && (
               <div style={{ marginBottom: 8 }}>
                 <select value={industrySelect} onChange={e => setIndustrySelect(e.target.value)}
                   style={{ width: "100%", padding: "7px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 6 }}>
                   {INDUSTRY_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
-                {industrySelect === "その他" && (
+                {industrySelect==="その他" && (
                   <input type="text" value={industryCustom} onChange={e => setIndustryCustom(e.target.value)} placeholder="業界名を入力"
                     style={{ width: "100%", padding: "7px 9px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 7, fontFamily: "inherit", boxSizing: "border-box", outline: "none" }}
-                    onFocus={e => e.target.style.borderColor = "#1e3a8a"}
-                    onBlur={e => e.target.style.borderColor = "#e5e7eb"} />
+                    onFocus={e => e.target.style.borderColor="#1e3a8a"}
+                    onBlur={e => e.target.style.borderColor="#e5e7eb"} />
                 )}
               </div>
             )}
@@ -587,20 +630,13 @@ export default function App() {
               <div style={{ width: 3, height: 11, background: "#1e3a8a", borderRadius: 2 }} />
               調査項目　<span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 10 }}>{selected.size}件選択</span>
             </div>
-
-            {/* プリセット（ハイライト付き） */}
             <div style={{ display: "flex", gap: 4, marginBottom: 10, flexWrap: "wrap" }}>
               {PRESETS.map((p, idx) => {
                 const isActive = activePreset === idx;
                 return (
                   <button key={p.label} onClick={() => applyPreset(p)}
-                    style={{
-                      fontSize: 10, padding: "4px 10px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", fontWeight: isActive ? 700 : 500,
-                      background: isActive ? "#1e3a8a" : "#f1f5f9",
-                      color: isActive ? "#fff" : "#374151",
-                      border: isActive ? "1.5px solid #1e3a8a" : "1.5px solid #e2e8f0",
-                    }}>
-                    {isActive ? "✓ " : ""}{p.label}
+                    style={{ fontSize: 10, padding: "4px 10px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", fontWeight: isActive?700:500, background: isActive?"#1e3a8a":"#f1f5f9", color: isActive?"#fff":"#374151", border: isActive?"1.5px solid #1e3a8a":"1.5px solid #e2e8f0" }}>
+                    {isActive?"✓ ":""}{p.label}
                   </button>
                 );
               })}
@@ -626,7 +662,7 @@ export default function App() {
                           <Checkbox checked={on} color={cat.color} />
                           <input type="checkbox" checked={on} onChange={() => toggle(item.id)} style={{ display: "none" }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, color: on ? "#111827" : "#9ca3af", fontWeight: on ? 500 : 400, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", lineHeight: 1.4 }}>
+                            <div style={{ fontSize: 12, color: on?"#111827":"#9ca3af", fontWeight: on?500:400, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", lineHeight: 1.4 }}>
                               {item.label}
                               {r && <StatusBadge status={r.status} />}
                             </div>
@@ -641,10 +677,10 @@ export default function App() {
           </div>
 
           <div style={{ padding: "12px 14px", borderTop: "1px solid #f3f4f6" }}>
-            {appStatus === "checking" && (
+            {appStatus==="checking" && (
               <div style={{ fontSize: 11, color: "#6b7280", textAlign: "center", marginBottom: 8 }}>🔍 企業名を確認中...</div>
             )}
-            {appStatus === "loading" && (
+            {appStatus==="loading" && (
               <WarehouseProgress done={progress.done} total={progress.total} current={progress.current} />
             )}
             <div style={{ display: "flex", gap: 6 }}>
@@ -655,13 +691,13 @@ export default function App() {
                 </button>
               )}
               {isLoading ? (
-                <button onClick={() => { abortRef.current = true; setAppStatus("idle"); }}
+                <button onClick={() => { abortRef.current=true; setAppStatus("idle"); }}
                   style={{ flex: 1, padding: "10px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>
                   ⏹ 中断
                 </button>
               ) : (
-                <button onClick={handleStart} disabled={!company.trim() || !selected.size}
-                  style={{ flex: 1, padding: "10px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", background: (!company.trim() || !selected.size) ? "#d1d5db" : "#1e3a8a", color: "#fff", border: "none", borderRadius: 8, cursor: (!company.trim() || !selected.size) ? "not-allowed" : "pointer" }}>
+                <button onClick={handleStart} disabled={!company.trim()||!selected.size}
+                  style={{ flex: 1, padding: "10px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", background: (!company.trim()||!selected.size)?"#d1d5db":"#1e3a8a", color: "#fff", border: "none", borderRadius: 8, cursor: (!company.trim()||!selected.size)?"not-allowed":"pointer" }}>
                   🔍 リサーチ開始
                 </button>
               )}
@@ -711,34 +747,34 @@ export default function App() {
                     </div>
                   )}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", marginTop: 6 }}>
-                    {[["判明している課題", parsedPrior.known_challenges],["担当者情報", parsedPrior.known_contacts],["システム環境", parsedPrior.known_systems],["その他情報", parsedPrior.other]].filter(([,v]) => v).map(([k,v]) => (
+                    {[["判明している課題",parsedPrior.known_challenges],["担当者情報",parsedPrior.known_contacts],["システム環境",parsedPrior.known_systems],["その他情報",parsedPrior.other]].filter(([,v])=>v).map(([k,v])=>(
                       <div key={k}><span style={{ fontSize: 10, fontWeight: 600, color: "#15803d" }}>{k}：</span><span style={{ fontSize: 12, color: "#166534" }}>{v}</span></div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {appStatus === "done" && hearingItems.length > 0 && (
+              {appStatus==="done" && hearingItems.length > 0 && (
                 <div style={{ background: "#fff5f5", border: "1px solid #fecaca", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#dc2626", marginBottom: 8 }}>⚠️ デスクトップリサーチで確認できなかった項目 ({hearingItems.length}件) — 初回訪問で確認</div>
                   {hearingItems.map(item => (
                     <div key={item.id} style={{ display: "flex", gap: 8, fontSize: 12, marginBottom: 4 }}>
                       <span style={{ color: "#dc2626", flexShrink: 0 }}>•</span>
                       <span style={{ fontWeight: 600, color: "#111827", flexShrink: 0, minWidth: 120 }}>{item.label}</span>
-                      <span style={{ color: "#6b7280" }}>{results[item.id]?.missing || "訪問時に確認"}</span>
+                      <span style={{ color: "#6b7280" }}>{results[item.id]?.missing||"訪問時に確認"}</span>
                     </div>
                   ))}
                 </div>
               )}
 
-              {appStatus === "done" && partialItems.length > 0 && (
+              {appStatus==="done" && partialItems.length > 0 && (
                 <div style={{ background: "#fffdf0", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 16px", marginBottom: 12 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#a16207", marginBottom: 6 }}>△ 情報が一部のみ取得できた項目 ({partialItems.length}件) — 追加確認推奨</div>
                   {partialItems.map(item => (
                     <div key={item.id} style={{ display: "flex", gap: 8, fontSize: 12, marginBottom: 3 }}>
                       <span style={{ color: "#a16207", flexShrink: 0 }}>•</span>
                       <span style={{ fontWeight: 600, color: "#111827", flexShrink: 0, minWidth: 120 }}>{item.label}</span>
-                      <span style={{ color: "#78350f" }}>{results[item.id]?.missing || ""}</span>
+                      <span style={{ color: "#78350f" }}>{results[item.id]?.missing||""}</span>
                     </div>
                   ))}
                 </div>
@@ -747,14 +783,14 @@ export default function App() {
               <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
                 {CATEGORIES.filter(cat => cat.items.some(i => results[i.id])).map(cat => {
                   const catItems = cat.items.filter(i => results[i.id]);
-                  const hasU = catItems.some(i => results[i.id]?.status === "unconfirmed");
-                  const hasP = catItems.some(i => results[i.id]?.status === "partial");
-                  const active = activeCategory === cat.id;
+                  const hasU = catItems.some(i => results[i.id]?.status==="unconfirmed");
+                  const hasP = catItems.some(i => results[i.id]?.status==="partial");
+                  const active = activeCategory===cat.id;
                   return (
-                    <button key={cat.id} onClick={() => setActiveCategory(cat.id)} style={{ padding: "5px 12px", fontSize: 12, fontWeight: 600, borderRadius: 20, cursor: "pointer", fontFamily: "inherit", background: active ? cat.color : "#fff", color: active ? "#fff" : "#374151", border: `1.5px solid ${active ? cat.color : "#e5e7eb"}`, display: "flex", alignItems: "center", gap: 5 }}>
+                    <button key={cat.id} onClick={() => setActiveCategory(cat.id)} style={{ padding: "5px 12px", fontSize: 12, fontWeight: 600, borderRadius: 20, cursor: "pointer", fontFamily: "inherit", background: active?cat.color:"#fff", color: active?"#fff":"#374151", border: `1.5px solid ${active?cat.color:"#e5e7eb"}`, display: "flex", alignItems: "center", gap: 5 }}>
                       {cat.label}
-                      {hasU && <span style={{ width: 7, height: 7, borderRadius: "50%", background: active ? "#fca5a5" : "#ef4444", display: "inline-block", flexShrink: 0 }} />}
-                      {!hasU && hasP && <span style={{ width: 7, height: 7, borderRadius: "50%", background: active ? "#fde68a" : "#f59e0b", display: "inline-block", flexShrink: 0 }} />}
+                      {hasU && <span style={{ width: 7, height: 7, borderRadius: "50%", background: active?"#fca5a5":"#ef4444", display: "inline-block", flexShrink: 0 }} />}
+                      {!hasU && hasP && <span style={{ width: 7, height: 7, borderRadius: "50%", background: active?"#fde68a":"#f59e0b", display: "inline-block", flexShrink: 0 }} />}
                     </button>
                   );
                 })}
