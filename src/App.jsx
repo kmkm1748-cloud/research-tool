@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect } from "react";
 import PptxGenJS from "pptxgenjs";
 
@@ -76,8 +77,8 @@ const TOOLTIPS = {
   basicInfo: "企業名はPPT表紙・全スライドのタイトルに使用されます。担当者部署はフッターに表示されます。",
   industry: "業界を指定すると業界シェア調査の精度が上がります。自動判定はAIが企業から業界を推定します。",
   priorInfo: "商談メモや名刺情報を貼り付けると、AIがリサーチ結果に自動反映します。",
-  pptStyle: "ビジュアル中心はカラーブロック・数値強調。テキスト中心はシンプル・ソース明記。調査結果タブとスライドに反映されます。",
-  items: "チェックした項目のみ調査します（1項目約1分）。プリセットで用途別に一括選択できます。",
+  pptStyle: "ビジュアル中心はカラーブロック・数値強調。テキスト中心はシンプル・ソース明記。",
+  items: "チェックした項目のみ調査します（1項目約1分）。1項目＝1スライドで出力されます。",
 };
 
 const FACT_ONLY = "公開情報・報道・公式サイトで確認できた事実のみ記載。推測・類推・一般論は禁止。不明な場合はstatusをunconfirmedにして空白にする。";
@@ -90,9 +91,27 @@ function safeStr(v) {
   return String(v);
 }
 
+// 日本語金額文字列を億円単位の数値に変換
+function parseJPY(str) {
+  if (!str) return 0;
+  const s = safeStr(str).replace(/,/g, "");
+  let val = 0;
+  const choMatch = s.match(/([\d.]+)\s*兆/);
+  const okuMatch = s.match(/([\d.]+)\s*億/);
+  const hyakuMatch = s.match(/([\d.]+)\s*百億/);
+  if (choMatch) val += parseFloat(choMatch[1]) * 10000;
+  if (hyakuMatch) val += parseFloat(hyakuMatch[1]) * 100;
+  else if (okuMatch) val += parseFloat(okuMatch[1]);
+  if (val === 0) {
+    const plain = parseFloat(s.replace(/[^\d.]/g, ""));
+    if (!isNaN(plain)) val = plain;
+  }
+  return Math.round(val);
+}
+
 function guessDomain(company) {
   const c = company.replace(/株式会社|有限会社|合同会社|ホールディングス|グループ|HD|Holdings/gi, "").replace(/[　\s]/g, "").toLowerCase();
-  const map = { "subaru": "subaru.co.jp", "スバル": "subaru.co.jp", "toyota": "toyota.co.jp", "トヨタ": "toyota.co.jp", "honda": "honda.co.jp", "ホンダ": "honda.co.jp", "nissan": "nissan.co.jp", "日産": "nissan.co.jp", "nichirei": "nichirei.co.jp", "ニチレイ": "nichirei.co.jp", "yamato": "yamato-hd.co.jp", "ヤマト": "yamato-hd.co.jp", "sagawa": "sagawa-exp.co.jp", "佐川": "sagawa-exp.co.jp", "nipponexpress": "nipponexpress.com", "日本通運": "nipponexpress.com", "hitachi": "hitachi.co.jp", "日立": "hitachi.co.jp", "fujitsu": "fujitsu.com", "富士通": "fujitsu.com" };
+  const map = { "subaru": "subaru.co.jp", "スバル": "subaru.co.jp", "toyota": "toyota.co.jp", "トヨタ": "toyota.co.jp", "honda": "honda.co.jp", "ホンダ": "honda.co.jp", "nissan": "nissan.co.jp", "日産": "nissan.co.jp", "nichirei": "nichirei.co.jp", "ニチレイ": "nichirei.co.jp", "yamato": "yamato-hd.co.jp", "ヤマト": "yamato-hd.co.jp", "sagawa": "sagawa-exp.co.jp", "佐川": "sagawa-exp.co.jp", "nipponexpress": "nipponexpress.com", "日本通運": "nipponexpress.com", "hitachi": "hitachi.co.jp", "日立": "hitachi.co.jp", "fujitsu": "fujitsu.com", "富士通": "fujitsu.com", "isuzu": "isuzu.co.jp", "いすゞ": "isuzu.co.jp" };
   for (const [key, domain] of Object.entries(map)) { if (c.includes(key.toLowerCase())) return domain; }
   return null;
 }
@@ -157,19 +176,19 @@ const RETRY_QUERIES = {
 const PROMPTS = {
   company_overview: (c) => `"${c}"の会社概要（設立・本社・従業員数・上場区分）。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   business_products: (c) => `"${c}"の事業領域・主力商材。事業別売上構成比（%）が分かる場合は記載。${FACT_ONLY} JSONのみ: {"summary":"3文以内","segments":[{"name":"事業名","ratio":"xx%"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
-  group_structure: (c) => `"${c}"のグループ構造。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
-  bases_network: (c) => `"${c}"の拠点・物流ネットワーク。主要拠点名と所在地を列挙。${FACT_ONLY} JSONのみ: {"summary":"3文以内","bases":[{"name":"拠点名","location":"都道府県"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  group_structure: (c) => `"${c}"のグループ構造。${FACT_ONLY} JSONのみ: {"summary":"3文以内","subsidiaries":[{"name":"子会社名","role":"役割"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  bases_network: (c) => `"${c}"の拠点・物流ネットワーク。主要拠点名と所在地を列挙。${FACT_ONLY} JSONのみ: {"summary":"3文以内","bases":[{"name":"拠点名","location":"都道府県","type":"工場|センター|本社|営業所"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   market_share: (c, ind) => `"${c}"の${ind ? `${ind}業界における` : ""}業界シェア・市場ポジション。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
-  pl_summary: (c) => `"${c}"の財務分析。①直近3期の売上高・営業利益・営業利益率 ②決算期（何月期か） ③物流コスト比率（判明する場合のみ）。結論を先に述べ、根拠となる数値を明記すること。${FACT_ONLY} JSONのみ: {"summary":"結論1文","detail":"根拠数値を含む詳細3文以内","revenue":"最新売上高","growth":"成長率","margin":"営業利益率","fiscal_month":"決算月（例：3月期）","logistics_cost_ratio":"物流コスト比率（不明な場合は空文字）","yearly_data":[{"year":"2023/3","revenue":"xx億円","profit":"xx億円","margin":"xx%"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
-  growth_profit: (c) => `"${c}"の成長性・収益性を分析。結論を先に述べ、根拠となる数値・トレンドを明記すること。${FACT_ONLY} JSONのみ: {"summary":"結論1文","detail":"根拠数値を含む詳細3文以内","conclusions":["結論1","結論2","結論3"],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
-  financial_health: (c) => `"${c}"の財務健全性を分析。①自己資本比率 ②有利子負債 ③物流コスト比率（判明する場合）を調査。結論を先に、根拠数値を明記すること。${FACT_ONLY} JSONのみ: {"summary":"結論1文","detail":"根拠数値を含む詳細3文以内","equity_ratio":"自己資本比率","roe":"ROE","conclusions":["結論1","結論2","結論3"],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  pl_summary: (c) => `"${c}"の財務分析。①直近3期の売上高・営業利益・営業利益率 ②決算期（何月期か） ③物流コスト比率（判明する場合のみ）。結論を先に述べ、根拠となる数値を明記すること。${FACT_ONLY} JSONのみ: {"summary":"結論1文","detail":"根拠数値を含む詳細3文以内","revenue":"最新売上高（億円単位の数値のみ、例：47283）","growth":"成長率","margin":"営業利益率","fiscal_month":"決算月（例：3月期）","logistics_cost_ratio":"物流コスト比率（不明な場合は空文字）","yearly_data":[{"year":"2023/3","revenue_str":"3兆2081億円","revenue":32081,"profit_str":"2291億円","profit":2291,"margin":"7.1%"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  growth_profit: (c) => `"${c}"の成長性・収益性を分析。結論を先に述べ、根拠となる数値・トレンドを明記すること。${FACT_ONLY} JSONのみ: {"summary":"結論1文","detail":"根拠数値を含む詳細3文以内","conclusions":["結論1","結論2","結論3"],"margin_trend":[{"year":"2023/3","margin":6.5},{"year":"2024/3","margin":7.5},{"year":"2025/3","margin":8.7}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  financial_health: (c) => `"${c}"の財務健全性を分析。①自己資本比率 ②有利子負債 ③物流コスト比率（判明する場合）を調査。結論を先に、根拠数値を明記すること。${FACT_ONLY} JSONのみ: {"summary":"結論1文","detail":"根拠数値を含む詳細3文以内","equity_ratio":"自己資本比率（数値のみ、例：41.0）","roe":"ROE（数値のみ、例：13.4）","conclusions":["結論1","結論2","結論3"],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   mid_term_plan: (c) => `"${c}"の中期経営計画（KPI・重点施策）。計画名・期間・主要KPIを明記。${FACT_ONLY} JSONのみ: {"summary":"3文以内","plan_name":"計画名","period":"期間","kpis":[{"label":"KPI名","value":"目標値"}],"phases":[{"period":"期間","content":"施策"}],"quote":"IR引用文（あれば）","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   dx_strategy: (c) => `"${c}"のDX・自動化戦略について、IR・ニュース・プレスリリースから実際のコメントや発表内容を引用して調査してください。推測は禁止。${FACT_ONLY} JSONのみ: {"summary":"引用ベースの事実3文以内","quote":"引用文（あれば）","initiatives":[{"label":"施策名","status":"進行中|予定|完了"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   sustainability: (c) => `"${c}"のサステナビリティ・ESG方針について、IR・ニュース・プレスリリースから実際のコメントや発表内容を引用して調査してください。推測は禁止。${FACT_ONLY} JSONのみ: {"summary":"引用ベースの事実3文以内","quote":"引用文（あれば）","targets":[{"label":"目標","value":"数値・期限"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   logistics_flow: (c) => `"${c}"の物流フロー概要。入荷〜保管〜出荷の流れを具体的に。${FACT_ONLY} JSONのみ: {"summary":"3文以内","steps":[{"label":"ステップ名","detail":"説明"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
-  product_features: (c) => `"${c}"が扱う商品の特性。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  product_features: (c) => `"${c}"が扱う商品の特性。${FACT_ONLY} JSONのみ: {"summary":"3文以内","features":[{"label":"特性名","value":"内容"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   existing_systems: (c) => `"${c}"が使用するWMS・TMS・ERP等の既存システム。${FACT_ONLY} JSONのみ: {"summary":"3文以内","systems":[{"name":"システム名","type":"種別","status":"稼働中|移行中|予定"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
-  org_structure: (c) => `"${c}"の物流・DX系部署の組織構成。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
+  org_structure: (c) => `"${c}"の物流・DX系部署の組織構成。${FACT_ONLY} JSONのみ: {"summary":"3文以内","departments":[{"name":"部署名","role":"役割"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
   recent_news: (c) => `"${c}"の直近1年のニュース・IR・プレスリリース。日付付きで列挙。${FACT_ONLY} JSONのみ: {"summary":"3文以内","news":[{"date":"yyyy/mm","title":"タイトル","detail":"詳細","url":"記事URL（あれば）"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
 };
 
@@ -236,7 +255,7 @@ async function deepResearchPremium(company, itemId, prompt, industry) {
   const allInfo = collectedTexts.join("\n\n---\n\n");
   const sourceUrls = [...new Set(collectedUrls)].slice(0, 3).join(", ");
   const finalPrompt = allInfo.length > 200 ? `${prompt}\n\n以下は複数の公式情報源から収集した情報です。source_urlには「${sourceUrls}」を記載してください：\n\n${allInfo.slice(0, 8000)}` : `${prompt}\n\nsource_urlには参照したURLを記載してください。情報が見つからない場合はstatusをunconfirmedにしてください。`;
-  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。収集した複数の公式情報源を総合分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測・類推・一般論は一切書かない - 財務項目は結論を先に述べ根拠数値を明記する - 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載 - missingには「訪問時に直接確認すべき具体的な質問」を書く - source_urlには実際に参照したURLを記載する - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt);
+  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。収集した複数の公式情報源を総合分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測・類推・一般論は一切書かない - 財務項目は結論を先に述べ根拠数値を明記する - 数値データは必ず数値型で返す（文字列不可）- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載 - missingには「訪問時に直接確認すべき具体的な質問」を書く - source_urlには実際に参照したURLを記載する - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt);
 }
 
 async function retryResearch(company, itemId, prompt, industry, hint = "") {
@@ -261,36 +280,472 @@ async function retryResearch(company, itemId, prompt, industry, hint = "") {
   const sourceUrls = [...new Set(collectedUrls)].slice(0, 3).join(", ");
   const hintText = hint ? `\n\nユーザーからの追加指示：「${hint}」この点を特に重視してください。` : "";
   const finalPrompt = allInfo.length > 200 ? `${prompt}${hintText}\n\n以下は再調査で収集した情報です。source_urlには「${sourceUrls}」を記載してください：\n\n${allInfo.slice(0, 8000)}` : `${prompt}${hintText}`;
-  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。再調査で収集した情報を分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測は禁止 - 財務項目は結論を先に根拠数値を明記 - source_urlには実際に参照したURLを記載 - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt);
+  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。再調査で収集した情報を分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測は禁止 - 財務項目は結論を先に根拠数値を明記 - 数値データは数値型で返す - source_urlには実際に参照したURLを記載 - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt);
 }
 
-// スライドHTML生成（iframeで表示するフルサイズHTML）
+// 1項目1スライドのHTML生成
 function buildSlideHTML(company, dept, results, pptStyle, selectedIds) {
   const today = new Date().toLocaleDateString("ja-JP");
-  const isVisual = pptStyle === "visual";
-  const orderedIds = REPORT_ORDER.filter(id => selectedIds.has(id) && results[id]);
-  const unconfirmedIds = orderedIds.filter(id => results[id]?.status === "unconfirmed");
+  const ss = safeStr;
+  const SLIDE_COLORS = ["#0068B7","#BAD6F0","#185FA5","#E8F4FF","#00519A","#93c5fd"];
 
-  const getR = (id) => results[id] || {};
-  const ss = (v) => {
-    if (!v) return "";
-    if (typeof v === "string") return v;
-    if (typeof v === "number") return String(v);
-    return JSON.stringify(v);
-  };
+  // ドーナツチャートSVG生成
+  function donutChart(segments, size = 180) {
+    if (!segments || segments.length === 0) return "";
+    const cx = size / 2, cy = size / 2, r = size * 0.38, ir = size * 0.22;
+    let angle = -Math.PI / 2;
+    const total = segments.reduce((s, seg) => s + (parseFloat(ss(seg.ratio)) || 0), 0);
+    const paths = segments.map((seg, i) => {
+      const pct = total > 0 ? (parseFloat(ss(seg.ratio)) || 0) / total : 1 / segments.length;
+      const sweep = pct * 2 * Math.PI;
+      const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
+      const x2 = cx + r * Math.cos(angle + sweep), y2 = cy + r * Math.sin(angle + sweep);
+      const ix1 = cx + ir * Math.cos(angle), iy1 = cy + ir * Math.sin(angle);
+      const ix2 = cx + ir * Math.cos(angle + sweep), iy2 = cy + ir * Math.sin(angle + sweep);
+      const large = sweep > Math.PI ? 1 : 0;
+      const path = `M${x1.toFixed(1)} ${y1.toFixed(1)} A${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} L${ix2.toFixed(1)} ${iy2.toFixed(1)} A${ir} ${ir} 0 ${large} 0 ${ix1.toFixed(1)} ${iy1.toFixed(1)}Z`;
+      angle += sweep;
+      return `<path d="${path}" fill="${SLIDE_COLORS[i % SLIDE_COLORS.length]}" stroke="#fff" stroke-width="2"/>`;
+    }).join("");
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${paths}</svg>`;
+  }
 
-  const groups = [
-    { ids: ["company_overview", "business_products"], label: "企業基本情報", sub: "Company Overview" },
-    { ids: ["pl_summary", "growth_profit", "financial_health"], label: "財務", sub: "Financial Highlights" },
-    { ids: ["mid_term_plan", "dx_strategy", "sustainability"], label: "戦略・方針", sub: "Strategy & Policy" },
-    { ids: ["logistics_flow", "product_features", "existing_systems"], label: "物流特性", sub: "Logistics" },
-    { ids: ["org_structure", "market_share", "group_structure", "bases_network", "recent_news"], label: "その他", sub: "Others" },
-  ];
+  // 棒グラフSVG生成（実データ使用）
+  function barChart(yearlyData, width = 320, height = 160) {
+    if (!yearlyData || yearlyData.length === 0) return `<div style="color:#6B7280;font-size:13px;padding:20px 0;">財務データ取得中</div>`;
+    const maxRev = Math.max(...yearlyData.map(y => y.revenue || parseJPY(ss(y.revenue_str)) || 0), 1);
+    const maxProf = Math.max(...yearlyData.map(y => y.profit || parseJPY(ss(y.profit_str)) || 0), 1);
+    const barW = Math.floor((width - 60) / yearlyData.length / 2.5);
+    const chartH = height - 30;
+    const bars = yearlyData.map((y, i) => {
+      const rev = y.revenue || parseJPY(ss(y.revenue_str)) || 0;
+      const prof = y.profit || parseJPY(ss(y.profit_str)) || 0;
+      const revH = Math.round((rev / maxRev) * chartH * 0.85);
+      const profH = Math.round((prof / maxRev) * chartH * 0.85);
+      const x = 40 + i * ((width - 60) / yearlyData.length);
+      return `
+        <rect x="${x}" y="${chartH - revH}" width="${barW}" height="${revH}" fill="#0068B7" rx="2"/>
+        <rect x="${x + barW + 3}" y="${chartH - profH}" width="${barW}" height="${profH}" fill="#E8F4FF" stroke="#0068B7" stroke-width="1" rx="2"/>
+        <text x="${x + barW}" y="${height - 5}" text-anchor="middle" font-size="10" fill="#6B7280">${ss(y.year)}</text>
+        <text x="${x}" y="${chartH - revH - 4}" font-size="9" fill="#0068B7">${ss(y.revenue_str || "")}</text>
+      `;
+    }).join("");
+    return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <line x1="36" y1="0" x2="36" y2="${chartH}" stroke="#E0E0E0" stroke-width="1"/>
+      <line x1="36" y1="${chartH}" x2="${width}" y2="${chartH}" stroke="#E0E0E0" stroke-width="1"/>
+      ${bars}
+      <rect x="${width - 100}" y="4" width="10" height="8" fill="#0068B7" rx="1"/>
+      <text x="${width - 86}" y="12" font-size="9" fill="#6B7280">売上高</text>
+      <rect x="${width - 100}" y="18" width="10" height="8" fill="#E8F4FF" stroke="#0068B7" stroke-width="1" rx="1"/>
+      <text x="${width - 86}" y="26" font-size="9" fill="#6B7280">営業利益</text>
+    </svg>`;
+  }
 
-  const slides = [];
+  // 利益率推移グラフ
+  function marginTrendChart(marginTrend, width = 300, height = 120) {
+    if (!marginTrend || marginTrend.length === 0) return "";
+    const maxM = Math.max(...marginTrend.map(m => parseFloat(m.margin) || 0), 1);
+    const pts = marginTrend.map((m, i) => {
+      const x = 30 + i * ((width - 60) / Math.max(marginTrend.length - 1, 1));
+      const y = (height - 30) - Math.round((parseFloat(m.margin) || 0) / maxM * (height - 40));
+      return { x, y, label: ss(m.year), val: m.margin };
+    });
+    const polyline = pts.map(p => `${p.x},${p.y}`).join(" ");
+    return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <polyline points="${polyline}" fill="none" stroke="#0068B7" stroke-width="2" stroke-linejoin="round"/>
+      ${pts.map(p => `
+        <circle cx="${p.x}" cy="${p.y}" r="4" fill="#0068B7"/>
+        <text x="${p.x}" y="${p.y - 8}" text-anchor="middle" font-size="9" fill="#0068B7">${p.val}%</text>
+        <text x="${p.x}" y="${height - 5}" text-anchor="middle" font-size="9" fill="#6B7280">${p.label}</text>
+      `).join("")}
+    </svg>`;
+  }
 
-  // 表紙
-  slides.push(`
+  // 各スライドのHTMLを生成（1項目1スライド）
+  function buildItemSlide(itemId, result, slideNum, totalSlides) {
+    const item = ALL_ITEMS.find(i => i.id === itemId);
+    const cat = CATEGORIES.find(c => c.items.some(i => i.id === itemId));
+    const accentColor = cat?.color || C.blue;
+    const ss2 = (v) => safeStr(v);
+    const sourceUrls = result?.source_url && typeof result.source_url === "string"
+      ? result.source_url.split(",").map(u => u.trim()).filter(u => u.startsWith("http"))
+      : [];
+    const stLabel = result?.status === "confirmed" ? "✓ 確認済み" : result?.status === "partial" ? "△ 一部のみ" : "⚠ 要確認";
+    const stColor = result?.status === "confirmed" ? "#15803d" : result?.status === "partial" ? "#a16207" : "#dc2626";
+    const stBg = result?.status === "confirmed" ? "#f0fdf4" : result?.status === "partial" ? "#fef9c3" : "#fee2e2";
+
+    let body = "";
+
+    // --- 項目ごとのレイアウト ---
+    if (itemId === "company_overview") {
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col center">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;">
+              ${["設立","本社所在地","従業員数","上場区分"].map(k => `
+                <div style="background:#F5F7FA;border-radius:8px;padding:12px 14px;border-left:3px solid ${accentColor};">
+                  <div style="font-size:11px;color:#6B7280;margin-bottom:4px;">${k}</div>
+                  <div style="font-size:13px;font-weight:500;color:#1A1A1A;">—</div>
+                </div>`).join("")}
+            </div>
+          </div>
+        </div>`;
+
+    } else if (itemId === "business_products") {
+      const segments = Array.isArray(result?.segments) ? result.segments : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${segments.length > 0 ? `
+              <div style="margin-top:16px;">
+                <div class="section-label">事業セグメント</div>
+                ${segments.map((s, i) => `
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                    <div style="width:12px;height:12px;background:${SLIDE_COLORS[i % SLIDE_COLORS.length]};border-radius:2px;flex-shrink:0;"></div>
+                    <div style="flex:1;font-size:13px;color:#1A1A1A;">${ss2(s.name)}</div>
+                    <div style="font-size:16px;font-weight:500;color:${accentColor};">${ss2(s.ratio)}</div>
+                  </div>`).join("")}
+              </div>` : ""}
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col center">
+            ${segments.length > 0 ? `
+              <div class="chart-label">事業別売上構成比</div>
+              ${donutChart(segments, 200)}
+              <div class="legend" style="margin-top:12px;">
+                ${segments.map((s, i) => `<span class="legend-item"><span class="legend-dot" style="background:${SLIDE_COLORS[i % SLIDE_COLORS.length]}"></span>${ss2(s.name)}</span>`).join("")}
+              </div>` : `<div style="color:#6B7280;font-size:14px;">事業構成比は非公開</div>`}
+          </div>
+        </div>`;
+
+    } else if (itemId === "pl_summary") {
+      const yearly = Array.isArray(result?.yearly_data) ? result.yearly_data : [];
+      body = `
+        <div style="display:flex;flex-direction:column;gap:16px;height:100%;">
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <div class="conclusion-item blue">▶ ${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.detail ? `<div style="font-size:13px;color:#374151;line-height:1.7;">${ss2(result.detail)}</div>` : ""}
+          </div>
+          <div style="display:flex;gap:12px;">
+            <div class="kpi-card"><div class="kpi-label">売上高（最新期）</div><div class="kpi-num">${ss2(result?.revenue) || "—"}</div><div class="kpi-sub">${ss2(result?.growth) || ""}</div></div>
+            <div class="kpi-card"><div class="kpi-label">営業利益率</div><div class="kpi-num">${ss2(result?.margin) || "—"}</div></div>
+            <div class="kpi-card"><div class="kpi-label">決算期</div><div class="kpi-num" style="font-size:22px;">${ss2(result?.fiscal_month) || "—"}</div></div>
+            <div class="kpi-card" style="border-top-color:${result?.logistics_cost_ratio ? accentColor : "#d97706"};"><div class="kpi-label">物流コスト比率</div><div class="kpi-num" style="font-size:${result?.logistics_cost_ratio ? "24px" : "16px"};color:${result?.logistics_cost_ratio ? accentColor : "#d97706"};">${ss2(result?.logistics_cost_ratio) || "要確認"}</div></div>
+          </div>
+          <div style="flex:1;">
+            <div class="chart-label">売上高・営業利益の推移</div>
+            ${barChart(yearly, 480, 180)}
+          </div>
+        </div>`;
+
+    } else if (itemId === "growth_profit") {
+      const conclusions = Array.isArray(result?.conclusions) ? result.conclusions : [];
+      const marginTrend = Array.isArray(result?.margin_trend) ? result.margin_trend : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="section-label">分析結論</div>
+            ${conclusions.length > 0
+              ? conclusions.map(c => `<div class="conclusion-item blue" style="margin-bottom:8px;">▶ ${ss2(c)}</div>`).join("")
+              : `<div class="conclusion-item blue">▶ ${ss2(result?.summary) || "情報なし"}</div>`}
+            ${result?.detail ? `<div style="font-size:13px;color:#374151;line-height:1.7;margin-top:12px;">${ss2(result.detail)}</div>` : ""}
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:12px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col center">
+            ${marginTrend.length > 0 ? `
+              <div class="chart-label">営業利益率の推移</div>
+              ${marginTrendChart(marginTrend, 320, 160)}` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "financial_health") {
+      const conclusions = Array.isArray(result?.conclusions) ? result.conclusions : [];
+      const equityRatio = parseFloat(ss2(result?.equity_ratio)) || 0;
+      const roe = parseFloat(ss2(result?.roe)) || 0;
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="section-label">分析結論</div>
+            ${conclusions.length > 0
+              ? conclusions.map(c => `<div class="conclusion-item blue" style="margin-bottom:8px;">▶ ${ss2(c)}</div>`).join("")
+              : `<div class="conclusion-item blue">▶ ${ss2(result?.summary) || "情報なし"}</div>`}
+            ${result?.detail ? `<div style="font-size:13px;color:#374151;line-height:1.7;margin-top:12px;">${ss2(result.detail)}</div>` : ""}
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:12px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            <div style="display:flex;flex-direction:column;gap:16px;">
+              ${equityRatio > 0 ? `
+                <div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-size:12px;color:#6B7280;">自己資本比率</span>
+                    <span style="font-size:20px;font-weight:500;color:${accentColor};">${equityRatio}%</span>
+                  </div>
+                  <div style="background:#E0E0E0;border-radius:99px;height:10px;overflow:hidden;">
+                    <div style="height:100%;width:${Math.min(equityRatio, 100)}%;background:${accentColor};border-radius:99px;"></div>
+                  </div>
+                  <div style="font-size:11px;color:#6B7280;margin-top:4px;">業界平均目安：30〜40%</div>
+                </div>` : ""}
+              ${roe > 0 ? `
+                <div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-size:12px;color:#6B7280;">ROE</span>
+                    <span style="font-size:20px;font-weight:500;color:${accentColor};">${roe}%</span>
+                  </div>
+                  <div style="background:#E0E0E0;border-radius:99px;height:10px;overflow:hidden;">
+                    <div style="height:100%;width:${Math.min(roe * 3, 100)}%;background:${accentColor};border-radius:99px;"></div>
+                  </div>
+                </div>` : ""}
+              <div class="kpi-card"><div class="kpi-label">自己資本比率</div><div class="kpi-num">${equityRatio > 0 ? equityRatio + "%" : ss2(result?.equity_ratio) || "—"}</div></div>
+              <div class="kpi-card"><div class="kpi-label">ROE</div><div class="kpi-num">${roe > 0 ? roe + "%" : ss2(result?.roe) || "—"}</div></div>
+            </div>
+          </div>
+        </div>`;
+
+    } else if (itemId === "mid_term_plan") {
+      const kpis = Array.isArray(result?.kpis) ? result.kpis : [];
+      const phases = Array.isArray(result?.phases) ? result.phases : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            ${result?.plan_name ? `<div class="plan-badge">${ss2(result.plan_name)}　${ss2(result?.period)}</div>` : ""}
+            ${result?.quote ? `<div class="quote-box blue">"${ss2(result.quote)}"</div>` : ""}
+            <div style="font-size:13px;color:#374151;line-height:1.7;">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:12px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            ${kpis.length > 0 ? `
+              <div class="section-label">重点KPI</div>
+              ${kpis.map(k => `
+                <div class="kpi-mini"><span class="kpi-mini-label">${ss2(k.label)}</span><span class="kpi-mini-val">${ss2(k.value)}</span></div>`).join("")}` : ""}
+            ${phases.length > 0 ? `
+              <div class="section-label" style="margin-top:12px;">フェーズ別施策</div>
+              ${phases.map((p, i) => `
+                <div class="phase-item">
+                  <div class="phase-dot" style="background:${i === 0 ? accentColor : "#BAD6F0"};"></div>
+                  <div><div class="phase-period">${ss2(p.period)}</div><div class="phase-content">${ss2(p.content)}</div></div>
+                </div>`).join("")}` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "dx_strategy" || itemId === "sustainability") {
+      const initiatives = Array.isArray(result?.initiatives) ? result.initiatives : [];
+      const targets = Array.isArray(result?.targets) ? result.targets : [];
+      const items2 = itemId === "dx_strategy" ? initiatives : targets;
+      const quoteColor = itemId === "sustainability" ? "#15803d" : accentColor;
+      const quoteBg = itemId === "sustainability" ? "#f0fdf4" : "#E8F4FF";
+      body = `
+        <div class="two-col">
+          <div class="col">
+            ${result?.quote ? `
+              <div style="background:${quoteBg};border-left:4px solid ${quoteColor};padding:14px 16px;border-radius:0;margin-bottom:16px;font-size:14px;font-style:italic;color:${quoteColor};line-height:1.7;">
+                "${ss2(result.quote)}"
+              </div>` : ""}
+            <div style="font-size:13px;color:#374151;line-height:1.7;">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:12px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            ${items2.length > 0 ? `
+              <div class="section-label">${itemId === "dx_strategy" ? "主要施策" : "目標・コミットメント"}</div>
+              ${items2.map(item2 => `
+                <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;padding:10px 12px;background:#F5F7FA;border-radius:6px;">
+                  <div style="width:8px;height:8px;border-radius:50%;background:${accentColor};flex-shrink:0;margin-top:4px;"></div>
+                  <div style="flex:1;">
+                    <span style="font-size:13px;color:#1A1A1A;">${ss2(item2.label || item2.name || "")}</span>
+                    ${item2.status ? `<span style="font-size:11px;color:${accentColor};margin-left:8px;background:#E8F4FF;padding:2px 6px;border-radius:3px;">${ss2(item2.status)}</span>` : ""}
+                    ${item2.value ? `<div style="font-size:14px;font-weight:500;color:${accentColor};margin-top:2px;">${ss2(item2.value)}</div>` : ""}
+                  </div>
+                </div>`).join("")}` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "logistics_flow") {
+      const steps = Array.isArray(result?.steps) ? result.steps : [];
+      body = `
+        <div style="display:flex;flex-direction:column;gap:20px;height:100%;">
+          ${steps.length > 0 ? `
+            <div class="flow-row">
+              ${steps.map((s, i) => `
+                <div class="flow-step ${i === 0 ? "active" : ""}">
+                  <div style="font-size:22px;margin-bottom:6px;">${["📦","🏢","🔍","🚚","🏪"][i] || "→"}</div>
+                  <div class="flow-step-label">${ss2(s.label)}</div>
+                  <div class="flow-step-detail">${ss2(s.detail)}</div>
+                </div>
+                ${i < steps.length - 1 ? `<div class="flow-arrow">→</div>` : ""}
+              `).join("")}
+            </div>` : `
+            <div class="flow-row">
+              <div class="flow-step active"><div style="font-size:22px;margin-bottom:6px;">📦</div><div class="flow-step-label">入荷・検品</div></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><div style="font-size:22px;margin-bottom:6px;">🏢</div><div class="flow-step-label">保管・仕分け</div></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><div style="font-size:22px;margin-bottom:6px;">🚚</div><div class="flow-step-label">出荷・配送</div></div>
+            </div>`}
+          <div style="flex:1;">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:12px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "existing_systems") {
+      const systems = Array.isArray(result?.systems) ? result.systems : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:16px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            ${systems.length > 0 ? `
+              <div class="section-label">システム一覧</div>
+              ${systems.map(s => `
+                <div class="system-item ${s.status === "移行中" ? "active" : ""}">
+                  <div><div class="system-name">${ss2(s.name)}</div><div class="system-type">${ss2(s.type)}</div></div>
+                  <div class="system-status">${ss2(s.status)}</div>
+                </div>`).join("")}` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "recent_news") {
+      const news = Array.isArray(result?.news) ? result.news : [];
+      body = `
+        <div style="display:flex;flex-direction:column;gap:12px;height:100%;">
+          <div style="font-size:13px;color:#374151;line-height:1.7;">${ss2(result?.summary) || ""}</div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
+            ${news.slice(0, 5).map(n => `
+              <div class="news-item">
+                <div class="news-date">${ss2(n.date)}</div>
+                <div class="news-content">
+                  <div class="news-title">${ss2(n.title)}</div>
+                  ${n.detail ? `<div style="font-size:12px;color:#6B7280;margin-top:2px;">${ss2(n.detail)}</div>` : ""}
+                </div>
+                ${n.url ? `<a href="${ss2(n.url)}" class="news-link" target="_blank">📎</a>` : ""}
+              </div>`).join("")}
+          </div>
+        </div>`;
+
+    } else if (itemId === "group_structure") {
+      const subsidiaries = Array.isArray(result?.subsidiaries) ? result.subsidiaries : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:16px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            ${subsidiaries.length > 0 ? `
+              <div class="section-label">主要グループ会社</div>
+              ${subsidiaries.slice(0, 6).map(s => `
+                <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;padding:8px 12px;background:#F5F7FA;border-radius:6px;">
+                  <div style="width:6px;height:6px;border-radius:50%;background:${accentColor};flex-shrink:0;margin-top:5px;"></div>
+                  <div><div style="font-size:13px;font-weight:500;color:#1A1A1A;">${ss2(s.name)}</div><div style="font-size:11px;color:#6B7280;">${ss2(s.role)}</div></div>
+                </div>`).join("")}` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "bases_network") {
+      const bases = Array.isArray(result?.bases) ? result.bases : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:16px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            ${bases.length > 0 ? `
+              <div class="section-label">主要拠点一覧</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                ${bases.slice(0, 8).map(b => `
+                  <div style="background:#F5F7FA;border-radius:6px;padding:8px 10px;">
+                    <div style="font-size:12px;font-weight:500;color:#1A1A1A;">${ss2(b.name)}</div>
+                    <div style="font-size:11px;color:#6B7280;">${ss2(b.location)} ${b.type ? `・${ss2(b.type)}` : ""}</div>
+                  </div>`).join("")}
+              </div>` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "org_structure") {
+      const departments = Array.isArray(result?.departments) ? result.departments : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:16px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            ${departments.length > 0 ? `
+              <div class="section-label">物流・DX系部署</div>
+              ${departments.slice(0, 6).map(d => `
+                <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;padding:8px 12px;background:#F5F7FA;border-radius:6px;">
+                  <div style="width:6px;height:6px;border-radius:50%;background:${accentColor};flex-shrink:0;margin-top:5px;"></div>
+                  <div><div style="font-size:13px;font-weight:500;color:#1A1A1A;">${ss2(d.name)}</div><div style="font-size:11px;color:#6B7280;">${ss2(d.role)}</div></div>
+                </div>`).join("")}` : ""}
+          </div>
+        </div>`;
+
+    } else if (itemId === "market_share") {
+      body = `
+        <div style="display:flex;flex-direction:column;gap:16px;height:100%;">
+          <div class="conclusion-item blue">▶ ${ss2(result?.summary) || "情報なし"}</div>
+          ${result?.detail ? `<div style="font-size:13px;color:#374151;line-height:1.7;">${ss2(result.detail)}</div>` : ""}
+          ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box">△ ${ss2(result?.missing)}</div>` : ""}
+        </div>`;
+
+    } else if (itemId === "product_features") {
+      const features = Array.isArray(result?.features) ? result.features : [];
+      body = `
+        <div class="two-col">
+          <div class="col">
+            <div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+            ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:16px;">△ ${ss2(result?.missing)}</div>` : ""}
+          </div>
+          <div class="col">
+            ${features.length > 0 ? `
+              <div class="section-label">商品特性</div>
+              ${features.slice(0, 6).map(f => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#F5F7FA;border-radius:6px;margin-bottom:6px;">
+                  <span style="font-size:12px;color:#6B7280;">${ss2(f.label)}</span>
+                  <span style="font-size:13px;font-weight:500;color:#1A1A1A;">${ss2(f.value)}</span>
+                </div>`).join("")}` : ""}
+          </div>
+        </div>`;
+
+    } else {
+      // デフォルト
+      body = `<div class="big-text">${ss2(result?.summary) || "情報なし"}</div>
+        ${result?.missing && result?.status !== "confirmed" ? `<div class="warn-box" style="margin-top:16px;">△ ${ss2(result?.missing)}</div>` : ""}`;
+    }
+
+    return `
+      <div class="slide content">
+        <div class="slide-header" style="border-bottom-color:${accentColor};">
+          <div class="header-accent" style="background:${accentColor};"></div>
+          <div class="header-text">
+            <div class="header-sub">${cat?.label || ""}</div>
+            <div class="header-title">${item?.label || itemId}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-left:auto;">
+            <div style="font-size:11px;font-weight:500;color:${stColor};background:${stBg};padding:3px 10px;border-radius:99px;">${stLabel}</div>
+            <div class="header-company">${company}</div>
+          </div>
+        </div>
+        <div class="slide-body">${body}</div>
+        <div class="slide-footer">
+          <span>${today}${dept ? " | " + dept : ""}${sourceUrls.length > 0 ? " | 📎 " + sourceUrls.map(u => { try { return new URL(u).hostname; } catch { return u; } }).join(", ") : ""}</span>
+          <span>${slideNum} / ${totalSlides}</span>
+        </div>
+      </div>`;
+  }
+
+  // 表示順に並べてスライド生成
+  const activeIds = REPORT_ORDER.filter(id => selectedIds.has(id) && results[id]);
+  const totalSlides = 1 + activeIds.length;
+
+  const slides = [`
     <div class="slide cover">
       <div class="cover-bar"></div>
       <div class="cover-body">
@@ -299,308 +754,14 @@ function buildSlideHTML(company, dept, results, pptStyle, selectedIds) {
         <div class="cover-divider"></div>
         ${dept ? `<div class="cover-dept">担当部署：${dept}</div>` : ""}
         <div class="cover-date">調査日：${today}</div>
-        <div class="cover-style">${PPT_STYLES.find(s => s.id === pptStyle)?.label || "ビジュアル中心"}</div>
+        <div class="cover-style">${PPT_STYLES.find(s => s.id === pptStyle)?.label || "ビジュアル中心"}　|　全${totalSlides}枚</div>
       </div>
     </div>
-  `);
+  `];
 
-  // グループスライド
-  let slideNum = 2;
-  for (const group of groups) {
-    const groupIds = group.ids.filter(id => selectedIds.has(id) && results[id]);
-    if (groupIds.length === 0) continue;
-
-    let body = "";
-
-    if (group.label === "企業基本情報") {
-      const r1 = getR("company_overview"), r2 = getR("business_products");
-      const segments = Array.isArray(r2.segments) ? r2.segments : [];
-      const donutSlices = segments.length > 0 ? segments : [{ name: "主力事業", ratio: "—" }];
-      const colors = ["#0068B7", "#BAD6F0", "#185FA5", "#E8F4FF", "#00519A"];
-
-      body = `
-        <div class="two-col">
-          <div class="col">
-            <div class="section-label">会社概要</div>
-            <div class="info-text">${ss(r1.summary) || "情報なし"}</div>
-            ${r1.missing && r1.status !== "confirmed" ? `<div class="warn-box">△ ${ss(r1.missing)}</div>` : ""}
-            <div class="section-label" style="margin-top:16px;">事業領域・主力商材</div>
-            <div class="info-text">${ss(r2.summary) || "情報なし"}</div>
-          </div>
-          <div class="col" style="align-items:center;justify-content:center;">
-            ${segments.length > 0 ? `
-            <div class="chart-label">事業別売上構成比</div>
-            <svg width="200" height="200" viewBox="0 0 200 200">
-              ${(() => {
-                let angle = -Math.PI / 2;
-                const cx = 100, cy = 100, r = 75, ir = 45;
-                return donutSlices.map((seg, i) => {
-                  const ratio = parseFloat(ss(seg.ratio)) / 100 || 1 / donutSlices.length;
-                  const sweep = ratio * 2 * Math.PI;
-                  const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
-                  const x2 = cx + r * Math.cos(angle + sweep), y2 = cy + r * Math.sin(angle + sweep);
-                  const ix1 = cx + ir * Math.cos(angle), iy1 = cy + ir * Math.sin(angle);
-                  const ix2 = cx + ir * Math.cos(angle + sweep), iy2 = cy + ir * Math.sin(angle + sweep);
-                  const large = sweep > Math.PI ? 1 : 0;
-                  const path = `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${ir} ${ir} 0 ${large} 0 ${ix1} ${iy1} Z`;
-                  const col = colors[i % colors.length];
-                  const midAngle = angle + sweep / 2;
-                  const lx = cx + (r + 15) * Math.cos(midAngle);
-                  const ly = cy + (r + 15) * Math.sin(midAngle);
-                  angle += sweep;
-                  return `<path d="${path}" fill="${col}" stroke="#fff" stroke-width="2"/><text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="central" font-size="9" fill="#1A1A1A">${ss(seg.ratio)}</text>`;
-                }).join("");
-              })()}
-              <text x="100" y="97" text-anchor="middle" font-size="11" font-weight="500" fill="#0068B7">${ss(donutSlices[0]?.name) || ""}</text>
-              <text x="100" y="111" text-anchor="middle" font-size="10" fill="#6B7280">${ss(donutSlices[0]?.ratio) || ""}</text>
-            </svg>
-            <div class="legend">
-              ${donutSlices.map((s, i) => `<span class="legend-item"><span class="legend-dot" style="background:${colors[i % colors.length]}"></span>${ss(s.name)}</span>`).join("")}
-            </div>
-            ` : `<div class="info-text" style="color:#6B7280;">事業構成比は非公開</div>`}
-          </div>
-        </div>
-      `;
-    } else if (group.label === "財務") {
-      const rp = getR("pl_summary"), rg = getR("growth_profit"), rh = getR("financial_health");
-      const yearly = Array.isArray(rp.yearly_data) ? rp.yearly_data : [];
-      const maxRev = Math.max(...yearly.map(y => parseFloat(ss(y.revenue)) || 0), 1);
-      const conclusions = Array.isArray(rg.conclusions) ? rg.conclusions : [];
-      const hconclusions = Array.isArray(rh.conclusions) ? rh.conclusions : [];
-
-      body = `
-        <div class="conclusions">
-          ${conclusions.slice(0, 2).map(c => `<div class="conclusion-item blue">▶ ${ss(c)}</div>`).join("")}
-          ${hconclusions.slice(0, 1).map(c => `<div class="conclusion-item blue">▶ ${ss(c)}</div>`).join("")}
-          ${rp.logistics_cost_ratio ? "" : `<div class="conclusion-item yellow">▶ 物流コスト比率は非公開。訪問時に確認要。</div>`}
-        </div>
-        <div class="two-col" style="margin-top:12px;">
-          <div class="col">
-            <div class="kpi-row">
-              <div class="kpi-card"><div class="kpi-label">売上高（最新期）</div><div class="kpi-num">${ss(rp.revenue) || "—"}</div><div class="kpi-sub">${ss(rp.growth) || ""}</div></div>
-              <div class="kpi-card"><div class="kpi-label">営業利益率</div><div class="kpi-num">${ss(rp.margin) || "—"}</div></div>
-              <div class="kpi-card"><div class="kpi-label">自己資本比率</div><div class="kpi-num">${ss(rh.equity_ratio) || "—"}</div></div>
-              <div class="kpi-card"><div class="kpi-label">決算期</div><div class="kpi-num" style="font-size:20px;">${ss(rp.fiscal_month) || "—"}</div></div>
-            </div>
-          </div>
-          <div class="col">
-            <div class="chart-label">売上・利益の推移</div>
-            <div class="bar-chart">
-              ${yearly.length > 0 ? yearly.map(y => {
-                const rev = parseFloat(ss(y.revenue)) || 0;
-                const prof = parseFloat(ss(y.profit)) || 0;
-                const revH = Math.round((rev / maxRev) * 120);
-                const profH = Math.round((prof / maxRev) * 120);
-                return `
-                  <div class="bar-group">
-                    <div class="bar-wrap">
-                      <div class="bar-rev" style="height:${revH}px;"></div>
-                      <div class="bar-prof" style="height:${profH}px;"></div>
-                    </div>
-                    <div class="bar-label">${ss(y.year)}</div>
-                  </div>`;
-              }).join("") : `<div style="color:#6B7280;font-size:14px;padding:20px;">財務データ取得中</div>`}
-              <div class="bar-legend">
-                <span><span class="legend-dot" style="background:#0068B7;"></span>売上高</span>
-                <span><span class="legend-dot" style="background:#E8F4FF;border:1px solid #0068B7;"></span>営業利益</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-    } else if (group.label === "戦略・方針") {
-      const rm = getR("mid_term_plan"), rd = getR("dx_strategy"), rs = getR("sustainability");
-      const phases = Array.isArray(rm.phases) ? rm.phases : [];
-      const kpis = Array.isArray(rm.kpis) ? rm.kpis : [];
-      const dxInit = Array.isArray(rd.initiatives) ? rd.initiatives : [];
-      const sTargets = Array.isArray(rs.targets) ? rs.targets : [];
-
-      body = `
-        <div class="three-col">
-          <div class="col">
-            <div class="section-label">中期経営計画</div>
-            ${rm.plan_name ? `<div class="plan-badge">${ss(rm.plan_name)}　${ss(rm.period)}</div>` : ""}
-            ${kpis.length > 0 ? kpis.map(k => `<div class="kpi-mini"><span class="kpi-mini-label">${ss(k.label)}</span><span class="kpi-mini-val">${ss(k.value)}</span></div>`).join("") : ""}
-            ${phases.length > 0 ? phases.map((p, i) => `
-              <div class="phase-item">
-                <div class="phase-dot" style="background:${i === 0 ? "#0068B7" : "#BAD6F0"};"></div>
-                <div><div class="phase-period">${ss(p.period)}</div><div class="phase-content">${ss(p.content)}</div></div>
-              </div>`).join("") : `<div class="info-text">${ss(rm.summary) || "情報なし"}</div>`}
-            ${rm.quote ? `<div class="quote-box">"${ss(rm.quote)}"</div>` : ""}
-          </div>
-          <div class="col">
-            <div class="section-label">DX・自動化戦略</div>
-            ${rd.quote ? `<div class="quote-box blue">"${ss(rd.quote)}"</div>` : ""}
-            <div class="info-text">${ss(rd.summary) || "情報なし"}</div>
-            ${dxInit.length > 0 ? dxInit.map(d => `
-              <div class="initiative-item">
-                <div class="init-dot" style="background:${d.status === "進行中" ? "#0068B7" : "#BAD6F0"};"></div>
-                <div><span class="init-label">${ss(d.label)}</span><span class="init-status">${ss(d.status)}</span></div>
-              </div>`).join("") : ""}
-            ${rd.source_url && typeof rd.source_url === "string" ? `<div class="source-url">📎 ${rd.source_url.split(",")[0].trim()}</div>` : ""}
-          </div>
-          <div class="col">
-            <div class="section-label">サステナビリティ</div>
-            ${rs.quote ? `<div class="quote-box green">"${ss(rs.quote)}"</div>` : ""}
-            <div class="info-text">${ss(rs.summary) || "情報なし"}</div>
-            ${sTargets.length > 0 ? sTargets.map(t => `
-              <div class="target-item">
-                <div class="target-label">${ss(t.label)}</div>
-                <div class="target-value">${ss(t.value)}</div>
-              </div>`).join("") : ""}
-            ${rs.source_url && typeof rs.source_url === "string" ? `<div class="source-url">📎 ${rs.source_url.split(",")[0].trim()}</div>` : ""}
-          </div>
-        </div>
-      `;
-    } else if (group.label === "物流特性") {
-      const rl = getR("logistics_flow"), rp2 = getR("product_features"), rs2 = getR("existing_systems");
-      const steps = Array.isArray(rl.steps) ? rl.steps : [];
-      const systems = Array.isArray(rs2.systems) ? rs2.systems : [];
-
-      body = `
-        <div class="logistics-layout">
-          <div class="flow-section">
-            <div class="section-label">物流フロー</div>
-            <div class="flow-row">
-              ${steps.length > 0 ? steps.map((s, i) => `
-                <div class="flow-step ${i === 0 ? "active" : ""}">
-                  <div class="flow-step-label">${ss(s.label)}</div>
-                  <div class="flow-step-detail">${ss(s.detail)}</div>
-                </div>
-                ${i < steps.length - 1 ? `<div class="flow-arrow">→</div>` : ""}
-              `).join("") : `
-                <div class="flow-step active"><div class="flow-step-label">入荷・検品</div></div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step"><div class="flow-step-label">保管・仕分け</div></div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step"><div class="flow-step-label">出荷・配送</div></div>
-              `}
-            </div>
-            <div class="info-text" style="margin-top:8px;">${ss(rl.summary) || "情報なし"}</div>
-          </div>
-          <div class="two-col" style="margin-top:12px;">
-            <div class="col">
-              <div class="section-label">取扱品の特性</div>
-              <div class="info-text">${ss(rp2.summary) || "情報なし"}</div>
-              ${rp2.missing && rp2.status !== "confirmed" ? `<div class="warn-box">△ ${ss(rp2.missing)}</div>` : ""}
-            </div>
-            <div class="col">
-              <div class="section-label">既存システム環境</div>
-              ${systems.length > 0 ? systems.map(s => `
-                <div class="system-item ${s.status === "移行中" ? "active" : ""}">
-                  <div class="system-name">${ss(s.name)}</div>
-                  <div class="system-type">${ss(s.type)}</div>
-                  <div class="system-status">${ss(s.status)}</div>
-                </div>`).join("") : `<div class="info-text">${ss(rs2.summary) || "情報なし"}</div>`}
-              ${rs2.missing && rs2.status !== "confirmed" ? `<div class="warn-box">△ ${ss(rs2.missing)}</div>` : ""}
-            </div>
-          </div>
-        </div>
-      `;
-    } else {
-      // その他グループ
-      const rn = getR("recent_news");
-      const news = Array.isArray(rn.news) ? rn.news : [];
-
-      body = `
-        <div class="others-layout">
-          ${groupIds.filter(id => id !== "recent_news").map(id => {
-            const r = getR(id);
-            const item = ALL_ITEMS.find(i => i.id === id);
-            return `
-              <div class="other-card">
-                <div class="section-label">${item?.label || id}</div>
-                <div class="info-text">${ss(r.summary) || "情報なし"}</div>
-                ${r.missing && r.status !== "confirmed" ? `<div class="warn-box">△ ${ss(r.missing)}</div>` : ""}
-              </div>
-            `;
-          }).join("")}
-          ${selectedIds.has("recent_news") && results["recent_news"] ? `
-            <div class="other-card news-card">
-              <div class="section-label">直近のニュース・トピック</div>
-              ${news.length > 0 ? news.slice(0, 4).map(n => `
-                <div class="news-item">
-                  <div class="news-date">${ss(n.date)}</div>
-                  <div class="news-content">
-                    <div class="news-title">${ss(n.title)}</div>
-                    ${n.url ? `<a href="${ss(n.url)}" class="news-link" target="_blank">📎 記事→</a>` : ""}
-                  </div>
-                </div>`).join("") : `<div class="info-text">${ss(rn.summary) || "情報なし"}</div>`}
-            </div>
-          ` : ""}
-        </div>
-      `;
-    }
-
-    slides.push(`
-      <div class="slide content">
-        <div class="slide-header">
-          <div class="header-accent"></div>
-          <div class="header-text">
-            <div class="header-sub">${group.sub}</div>
-            <div class="header-title">${group.label}</div>
-          </div>
-          <div class="header-company">${company}</div>
-        </div>
-        <div class="slide-body">${body}</div>
-        <div class="slide-footer">
-          <span>${today}${dept ? " | " + dept : ""}</span>
-          <span>${slideNum} / ${slides.length + 1 + (unconfirmedIds.length > 0 ? 1 : 0)}</span>
-        </div>
-      </div>
-    `);
-    slideNum++;
-  }
-
-  // ヒアリングシート
-  if (unconfirmedIds.length > 0) {
-    const unconfirmedItems = unconfirmedIds.map(id => ({ id, item: ALL_ITEMS.find(i => i.id === id), r: getR(id) }));
-    const partialIds = REPORT_ORDER.filter(id => selectedIds.has(id) && results[id]?.status === "partial");
-    const partialItems = partialIds.map(id => ({ id, item: ALL_ITEMS.find(i => i.id === id), r: getR(id) }));
-
-    slides.push(`
-      <div class="slide content">
-        <div class="slide-header" style="border-bottom-color:#dc2626;">
-          <div class="header-accent" style="background:#dc2626;"></div>
-          <div class="header-text">
-            <div class="header-sub">Hearing Sheet</div>
-            <div class="header-title">ヒアリングシート — 初回訪問で確認</div>
-          </div>
-          <div class="header-company">${company}</div>
-        </div>
-        <div class="slide-body">
-          <div class="two-col">
-            <div class="col">
-              <div class="section-label" style="color:#dc2626;">⚠ 未確認事項（${unconfirmedItems.length}件）</div>
-              ${unconfirmedItems.map(({ item, r }) => `
-                <div class="hearing-item red">
-                  <div class="hearing-dot red"></div>
-                  <div>
-                    <div class="hearing-title">${item?.label || ""}</div>
-                    <div class="hearing-detail">${ss(r.missing) || "訪問時に確認"}</div>
-                  </div>
-                </div>`).join("")}
-            </div>
-            <div class="col">
-              <div class="section-label" style="color:#a16207;">△ 追加確認推奨（${partialItems.length}件）</div>
-              ${partialItems.map(({ item, r }) => `
-                <div class="hearing-item yellow">
-                  <div class="hearing-dot yellow"></div>
-                  <div>
-                    <div class="hearing-title">${item?.label || ""}</div>
-                    <div class="hearing-detail">${ss(r.missing) || "追加確認推奨"}</div>
-                  </div>
-                </div>`).join("")}
-            </div>
-          </div>
-        </div>
-        <div class="slide-footer">
-          <span>${today}${dept ? " | " + dept : ""}</span>
-          <span>${slideNum} / ${slideNum}</span>
-        </div>
-      </div>
-    `);
-  }
+  activeIds.forEach((id, i) => {
+    slides.push(buildItemSlide(id, results[id], i + 2, totalSlides));
+  });
 
   const css = `
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Helvetica Neue', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; }
@@ -616,134 +777,88 @@ function buildSlideHTML(company, dept, results, pptStyle, selectedIds) {
     .cover-dept { font-size: 16px; color: #6B7280; margin-bottom: 8px; }
     .cover-date { font-size: 14px; color: #B0B0B0; margin-bottom: 6px; }
     .cover-style { font-size: 13px; color: #B0B0B0; }
-    .slide-header { background: #fff; border-bottom: 3px solid #0068B7; padding: 12px 24px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-    .header-accent { width: 5px; height: 32px; background: #0068B7; border-radius: 0; flex-shrink: 0; }
+    .slide-header { background: #fff; border-bottom: 3px solid #0068B7; padding: 14px 24px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .header-accent { width: 5px; height: 32px; border-radius: 0; flex-shrink: 0; }
     .header-sub { font-size: 11px; color: #6B7280; }
-    .header-title { font-size: 20px; font-weight: 500; color: #1A1A1A; }
-    .header-company { font-size: 11px; color: #B0B0B0; margin-left: auto; }
-    .slide-body { flex: 1; padding: 20px 24px; overflow: hidden; }
-    .slide-footer { height: 28px; background: #F5F7FA; border-top: 1px solid #E0E0E0; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; flex-shrink: 0; font-size: 11px; color: #B0B0B0; }
-    .two-col { display: flex; gap: 16px; }
-    .three-col { display: flex; gap: 12px; height: 100%; }
-    .col { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-    .section-label { font-size: 12px; font-weight: 500; color: #0068B7; margin-bottom: 4px; border-bottom: 1px solid #E8F4FF; padding-bottom: 4px; }
-    .info-text { font-size: 13px; color: #374151; line-height: 1.7; }
-    .warn-box { background: #fef9c3; border-left: 3px solid #d97706; padding: 6px 10px; font-size: 12px; color: #a16207; margin-top: 6px; }
-    .err-box { background: #fee2e2; border-left: 3px solid #dc2626; padding: 6px 10px; font-size: 12px; color: #dc2626; margin-top: 6px; }
-    .ok-box { background: #f0fdf4; border-left: 3px solid #15803d; padding: 6px 10px; font-size: 12px; color: #15803d; margin-top: 6px; }
+    .header-title { font-size: 22px; font-weight: 500; color: #1A1A1A; }
+    .header-company { font-size: 11px; color: #B0B0B0; }
+    .slide-body { flex: 1; padding: 24px 28px; overflow: hidden; }
+    .slide-footer { height: 30px; background: #F5F7FA; border-top: 1px solid #E0E0E0; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; flex-shrink: 0; font-size: 11px; color: #B0B0B0; }
+    .two-col { display: flex; gap: 24px; height: 100%; }
+    .col { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+    .col.center { align-items: center; justify-content: center; }
+    .section-label { font-size: 12px; font-weight: 500; color: #0068B7; border-bottom: 1px solid #E8F4FF; padding-bottom: 6px; margin-bottom: 8px; }
+    .big-text { font-size: 15px; color: #374151; line-height: 1.85; }
+    .warn-box { background: #fef9c3; border-left: 3px solid #d97706; padding: 8px 12px; font-size: 13px; color: #a16207; border-radius: 0; }
+    .err-box { background: #fee2e2; border-left: 3px solid #dc2626; padding: 8px 12px; font-size: 13px; color: #dc2626; }
     .chart-label { font-size: 12px; color: #6B7280; margin-bottom: 8px; font-weight: 500; }
-    .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 12px; color: #374151; }
-    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: #374151; }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
     .legend-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-    .kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .kpi-card { background: #F5F7FA; border-top: 2px solid #0068B7; border-radius: 4px; padding: 10px 12px; }
-    .kpi-label { font-size: 11px; color: #6B7280; margin-bottom: 4px; }
-    .kpi-num { font-size: 26px; font-weight: 500; color: #0068B7; line-height: 1; }
-    .kpi-sub { font-size: 11px; color: #B0B0B0; margin-top: 2px; }
-    .bar-chart { display: flex; align-items: flex-end; gap: 20px; height: 160px; padding-bottom: 24px; position: relative; }
-    .bar-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-    .bar-wrap { display: flex; gap: 3px; align-items: flex-end; height: 130px; }
-    .bar-rev { background: #0068B7; width: 20px; border-radius: 2px 2px 0 0; transition: height 0.5s; }
-    .bar-prof { background: #E8F4FF; border: 1px solid #0068B7; width: 20px; border-radius: 2px 2px 0 0; }
-    .bar-label { font-size: 11px; color: #6B7280; white-space: nowrap; }
-    .bar-legend { display: flex; flex-direction: column; gap: 4px; margin-left: 12px; justify-content: flex-end; padding-bottom: 20px; font-size: 11px; color: #6B7280; }
-    .conclusions { display: flex; flex-direction: column; gap: 6px; }
-    .conclusion-item { padding: 8px 14px; font-size: 13px; font-weight: 500; border-radius: 0; }
+    .kpi-card { background: #F5F7FA; border-top: 2px solid #0068B7; border-radius: 4px; padding: 12px 14px; flex: 1; }
+    .kpi-label { font-size: 11px; color: #6B7280; margin-bottom: 6px; }
+    .kpi-num { font-size: 26px; font-weight: 500; color: #0068B7; line-height: 1.1; }
+    .kpi-sub { font-size: 11px; color: #B0B0B0; margin-top: 4px; }
+    .conclusion-item { padding: 10px 16px; font-size: 13px; font-weight: 500; }
     .conclusion-item.blue { background: #E8F4FF; border-left: 4px solid #0068B7; color: #0C447C; }
-    .conclusion-item.yellow { background: #fef9c3; border-left: 4px solid #d97706; color: #a16207; }
-    .plan-badge { background: #E8F4FF; border: 1px solid #BAD6F0; border-radius: 4px; padding: 6px 12px; font-size: 13px; font-weight: 500; color: #0068B7; margin-bottom: 8px; }
-    .kpi-mini { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; background: #F5F7FA; border-radius: 3px; margin-bottom: 4px; }
-    .kpi-mini-label { font-size: 11px; color: #6B7280; }
-    .kpi-mini-val { font-size: 13px; font-weight: 500; color: #0068B7; }
-    .phase-item { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
-    .phase-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
-    .phase-period { font-size: 11px; font-weight: 500; color: #0068B7; }
+    .plan-badge { background: #E8F4FF; border: 1px solid #BAD6F0; border-radius: 4px; padding: 8px 14px; font-size: 14px; font-weight: 500; color: #0068B7; margin-bottom: 12px; }
+    .kpi-mini { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: #F5F7FA; border-radius: 4px; margin-bottom: 6px; }
+    .kpi-mini-label { font-size: 12px; color: #6B7280; }
+    .kpi-mini-val { font-size: 15px; font-weight: 500; color: #0068B7; }
+    .phase-item { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+    .phase-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+    .phase-period { font-size: 11px; font-weight: 500; color: #0068B7; margin-bottom: 2px; }
     .phase-content { font-size: 12px; color: #374151; line-height: 1.5; }
-    .quote-box { font-size: 12px; font-style: italic; line-height: 1.6; padding: 8px 12px; margin: 6px 0; border-radius: 0; }
-    .quote-box.blue { background: #F5F7FA; border-left: 3px solid #0068B7; color: #0C447C; }
-    .quote-box.green { background: #f0fdf4; border-left: 3px solid #15803d; color: #173404; }
-    .quote-box:not(.blue):not(.green) { background: #F5F7FA; border-left: 3px solid #0068B7; color: #374151; }
-    .initiative-item { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px; }
-    .init-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
-    .init-label { font-size: 12px; color: #374151; }
-    .init-status { font-size: 11px; color: #0068B7; margin-left: 6px; }
-    .target-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; background: #f0fdf4; border-radius: 3px; margin-bottom: 4px; }
-    .target-label { font-size: 11px; color: #374151; }
-    .target-value { font-size: 13px; font-weight: 500; color: #15803d; }
-    .source-url { font-size: 11px; color: #0068B7; margin-top: 6px; }
-    .logistics-layout { display: flex; flex-direction: column; gap: 12px; height: 100%; }
-    .flow-section { flex-shrink: 0; }
-    .flow-row { display: flex; align-items: center; gap: 4px; }
-    .flow-step { flex: 1; background: #F5F7FA; border-radius: 6px; padding: 10px 8px; text-align: center; }
+    .quote-box { font-size: 14px; font-style: italic; line-height: 1.7; padding: 12px 16px; margin-bottom: 14px; }
+    .quote-box.blue { background: #E8F4FF; border-left: 4px solid #0068B7; color: #0C447C; }
+    .flow-row { display: flex; align-items: stretch; gap: 6px; }
+    .flow-step { flex: 1; background: #F5F7FA; border-radius: 8px; padding: 16px 12px; text-align: center; }
     .flow-step.active { background: #E8F4FF; border: 1px solid #BAD6F0; }
-    .flow-step-label { font-size: 13px; font-weight: 500; color: #1A1A1A; }
-    .flow-step-detail { font-size: 11px; color: #6B7280; margin-top: 3px; }
-    .flow-arrow { font-size: 18px; color: #0068B7; font-weight: 500; flex-shrink: 0; }
-    .system-item { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #F5F7FA; border-radius: 4px; margin-bottom: 4px; }
+    .flow-step-label { font-size: 14px; font-weight: 500; color: #1A1A1A; margin-bottom: 4px; }
+    .flow-step-detail { font-size: 12px; color: #6B7280; line-height: 1.5; }
+    .flow-arrow { font-size: 20px; color: #0068B7; font-weight: 500; flex-shrink: 0; display: flex; align-items: center; }
+    .system-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #F5F7FA; border-radius: 6px; margin-bottom: 6px; }
     .system-item.active { background: #E8F4FF; }
-    .system-name { font-size: 13px; font-weight: 500; color: #1A1A1A; flex: 1; }
+    .system-name { font-size: 14px; font-weight: 500; color: #1A1A1A; }
     .system-type { font-size: 11px; color: #6B7280; }
-    .system-status { font-size: 11px; color: #0068B7; background: #E8F4FF; padding: 2px 6px; border-radius: 3px; }
-    .others-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }
-    .other-card { padding: 0; }
-    .news-card { grid-column: span 2; }
-    .news-item { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #F0F0F0; }
-    .news-date { background: #0068B7; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; }
+    .system-status { font-size: 11px; color: #0068B7; background: #E8F4FF; padding: 3px 8px; border-radius: 3px; }
+    .news-item { display: flex; gap: 12px; align-items: flex-start; padding: 10px 14px; background: #F5F7FA; border-radius: 6px; }
+    .news-date { background: #0068B7; color: #fff; font-size: 11px; padding: 3px 10px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; }
     .news-content { flex: 1; }
-    .news-title { font-size: 13px; color: #1A1A1A; font-weight: 500; margin-bottom: 2px; }
-    .news-link { font-size: 11px; color: #0068B7; text-decoration: none; }
-    .hearing-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 4px; margin-bottom: 6px; }
-    .hearing-item.red { background: #fff5f5; }
-    .hearing-item.yellow { background: #fffdf0; }
-    .hearing-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
-    .hearing-dot.red { background: #dc2626; }
-    .hearing-dot.yellow { background: #d97706; }
-    .hearing-title { font-size: 14px; font-weight: 500; color: #1A1A1A; margin-bottom: 3px; }
-    .hearing-detail { font-size: 12px; color: #6B7280; line-height: 1.5; }
+    .news-title { font-size: 13px; color: #1A1A1A; font-weight: 500; }
+    .news-link { font-size: 16px; text-decoration: none; flex-shrink: 0; }
   `;
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body><div class="slide-wrapper">${slides.join("")}</div></body></html>`;
 }
 
-// PPT生成
+// PPT生成（1項目1スライド）
 async function generatePPT(company, dept, results, pptStyle, selectedIds) {
   const prs = new PptxGenJS();
   prs.layout = "LAYOUT_WIDE";
   const today = new Date().toLocaleDateString("ja-JP");
   const W = 13.33, H = 7.5;
-  const ss = (v) => { if (!v) return ""; if (typeof v === "string") return v; if (typeof v === "number") return String(v); return ""; };
+  const ss2 = safeStr;
 
-  const addHeader = (slide, title, sub = "") => {
+  const addHeader = (slide, title, sub, accentColor = "0068B7") => {
     slide.addShape("rect", { x: 0, y: 0, w: W, h: 1.3, fill: { color: "FFFFFF" } });
-    slide.addShape("rect", { x: 0, y: 1.28, w: W, h: 0.06, fill: { color: "0068B7" } });
-    slide.addShape("rect", { x: 0, y: 0, w: 0.08, h: 1.3, fill: { color: "0068B7" } });
-    if (sub) slide.addText(sub, { x: 0.2, y: 0.1, w: 10, h: 0.35, fontSize: 10, color: "6B7280" });
-    slide.addText(title, { x: 0.2, y: sub ? 0.45 : 0.35, w: 10, h: 0.7, fontSize: 22, color: "1A1A1A", bold: true });
-    slide.addText(company, { x: 10.5, y: 0.1, w: 2.7, h: 0.35, fontSize: 10, color: "B0B0B0", align: "right" });
+    slide.addShape("rect", { x: 0, y: 1.28, w: W, h: 0.06, fill: { color: accentColor } });
+    slide.addShape("rect", { x: 0, y: 0, w: 0.08, h: 1.3, fill: { color: accentColor } });
+    if (sub) slide.addText(sub, { x: 0.2, y: 0.08, w: 10, h: 0.35, fontSize: 10, color: "6B7280" });
+    slide.addText(title, { x: 0.2, y: 0.42, w: 9.5, h: 0.72, fontSize: 22, color: "1A1A1A", bold: true });
+    slide.addText(company, { x: 10.8, y: 0.08, w: 2.4, h: 0.35, fontSize: 10, color: "B0B0B0", align: "right" });
   };
-  const addFooter = (slide, pageNum, total) => {
+  const addFooter = (slide, pageNum, total, sourceUrl = "") => {
     slide.addShape("rect", { x: 0, y: H - 0.45, w: W, h: 0.45, fill: { color: "F5F7FA" } });
     slide.addShape("rect", { x: 0, y: H - 0.47, w: W, h: 0.04, fill: { color: "E0E0E0" } });
-    slide.addText(`${today}${dept ? " | " + dept : ""}`, { x: 0.3, y: H - 0.38, w: 9, h: 0.3, fontSize: 9, color: "B0B0B0" });
+    const footerLeft = `${today}${dept ? " | " + dept : ""}${sourceUrl ? " | 📎 " + sourceUrl : ""}`;
+    slide.addText(footerLeft, { x: 0.3, y: H - 0.38, w: 10, h: 0.3, fontSize: 9, color: "B0B0B0" });
     slide.addText(`${pageNum} / ${total}`, { x: W - 1.5, y: H - 0.38, w: 1.2, h: 0.3, fontSize: 9, color: "B0B0B0", align: "right" });
   };
-  const tr = (text, len = 150) => { const s = ss(text); return s.length > len ? s.slice(0, len) + "…" : s; };
-  const stLabel = (st) => st === "confirmed" ? "✓ 確認済み" : st === "partial" ? "△ 一部のみ" : "⚠ 要確認";
-  const stColor = (st) => st === "confirmed" ? "15803d" : st === "partial" ? "a16207" : "dc2626";
-  const getR = (id) => results[id] || {};
+  const tr = (v, len = 150) => { const s = ss2(v); return s.length > len ? s.slice(0, len) + "…" : s; };
 
-  const orderedIds = REPORT_ORDER.filter(id => selectedIds.has(id) && results[id]);
-  const unconfirmedIds = orderedIds.filter(id => results[id]?.status === "unconfirmed");
-  const groups = [
-    { ids: ["company_overview", "business_products"], label: "企業基本情報", sub: "Company Overview" },
-    { ids: ["pl_summary", "growth_profit", "financial_health"], label: "財務", sub: "Financial Highlights" },
-    { ids: ["mid_term_plan", "dx_strategy", "sustainability"], label: "戦略・方針", sub: "Strategy & Policy" },
-    { ids: ["logistics_flow", "product_features", "existing_systems"], label: "物流特性", sub: "Logistics" },
-    { ids: ["org_structure", "market_share", "group_structure", "bases_network", "recent_news"], label: "その他", sub: "Others" },
-  ];
-
-  const totalSlides = 1 + groups.filter(g => g.ids.some(id => selectedIds.has(id) && results[id])).length + (unconfirmedIds.length > 0 ? 1 : 0);
-  let pageNum = 1;
+  const activeIds = REPORT_ORDER.filter(id => selectedIds.has(id) && results[id]);
+  const totalSlides = 1 + activeIds.length;
 
   // 表紙
   const cover = prs.addSlide();
@@ -754,97 +869,181 @@ async function generatePPT(company, dept, results, pptStyle, selectedIds) {
   cover.addShape("rect", { x: 0.4, y: 3.6, w: 0.9, h: 0.06, fill: { color: "0068B7" } });
   if (dept) cover.addText(`担当部署：${dept}`, { x: 0.4, y: 3.9, w: 8, h: 0.45, fontSize: 15, color: "6B7280" });
   cover.addText(`調査日：${today}`, { x: 0.4, y: 4.5, w: 6, h: 0.4, fontSize: 13, color: "B0B0B0" });
-  pageNum++;
+  cover.addText(`${PPT_STYLES.find(s => s.id === pptStyle)?.label || "ビジュアル中心"}　|　全${totalSlides}枚`, { x: 0.4, y: 5.0, w: 6, h: 0.35, fontSize: 12, color: "B0B0B0" });
 
-  // グループスライド
-  for (const group of groups) {
-    const groupIds = group.ids.filter(id => selectedIds.has(id) && results[id]);
-    if (groupIds.length === 0) continue;
+  // 1項目1スライド
+  activeIds.forEach((itemId, idx) => {
+    const result = results[itemId];
+    const item = ALL_ITEMS.find(i => i.id === itemId);
+    const cat = CATEGORIES.find(c => c.items.some(i => i.id === itemId));
+    const accentHex = (cat?.color || C.blue).replace("#", "");
+    const sourceUrls = result?.source_url && typeof result.source_url === "string"
+      ? result.source_url.split(",").map(u => u.trim()).filter(u => u.startsWith("http"))
+      : [];
+    const sourceHost = sourceUrls.length > 0 ? (() => { try { return new URL(sourceUrls[0]).hostname; } catch { return sourceUrls[0]; } })() : "";
+    const pageNum = idx + 2;
+    const stLabel = result?.status === "confirmed" ? "✓ 確認済み" : result?.status === "partial" ? "△ 一部のみ" : "⚠ 要確認";
+    const stColor = result?.status === "confirmed" ? "15803d" : result?.status === "partial" ? "a16207" : "dc2626";
+
     const slide = prs.addSlide();
     slide.background = { color: "FFFFFF" };
-    addHeader(slide, group.label, group.sub);
-    addFooter(slide, pageNum, totalSlides);
+    addHeader(slide, item?.label || itemId, cat?.label || "", accentHex);
+    addFooter(slide, pageNum, totalSlides, sourceHost);
 
-    let yPos = 1.45;
-    const bodyH = H - 1.45 - 0.5;
+    // ステータスバッジ
+    slide.addText(stLabel, { x: 9.5, y: 0.45, w: 2.0, h: 0.4, fontSize: 11, color: stColor, align: "right" });
 
-    if (group.label === "財務") {
-      const rp = getR("pl_summary"), rg = getR("growth_profit"), rh = getR("financial_health");
-      const conclusions = Array.isArray(rg.conclusions) ? rg.conclusions : [];
-      const hconclusions = Array.isArray(rh.conclusions) ? rh.conclusions : [];
-      const allConclusions = [...conclusions.slice(0, 2), ...hconclusions.slice(0, 1)];
+    const bodyY = 1.45, bodyH = H - 1.45 - 0.5;
 
-      allConclusions.forEach((c, i) => {
-        slide.addShape("rect", { x: 0.3, y: yPos + i * 0.38, w: W - 0.6, h: 0.32, fill: { color: "E8F4FF" } });
-        slide.addShape("rect", { x: 0.3, y: yPos + i * 0.38, w: 0.05, h: 0.32, fill: { color: "0068B7" } });
-        slide.addText(`▶ ${tr(c, 80)}`, { x: 0.45, y: yPos + i * 0.38 + 0.04, w: W - 0.8, h: 0.24, fontSize: 10, color: "0C447C" });
+    // 項目ごとのPPTレイアウト
+    if (["pl_summary","growth_profit","financial_health"].includes(itemId)) {
+      // 財務系：結論→KPI→グラフ
+      const conclusions = Array.isArray(result?.conclusions) ? result.conclusions :
+        result?.summary ? [result.summary] : [];
+      let y = bodyY;
+      conclusions.slice(0, 3).forEach(c => {
+        slide.addShape("rect", { x: 0.3, y, w: W - 0.6, h: 0.4, fill: { color: "E8F4FF" } });
+        slide.addShape("rect", { x: 0.3, y, w: 0.05, h: 0.4, fill: { color: accentHex } });
+        slide.addText(`▶ ${tr(c, 90)}`, { x: 0.45, y: y + 0.06, w: W - 0.8, h: 0.28, fontSize: 11, color: "0C447C" });
+        y += 0.46;
       });
-      yPos += allConclusions.length * 0.38 + 0.15;
-
-      // KPIカード
-      const kpis = [
-        { label: "売上高（最新期）", value: ss(rp.revenue) || "—", sub: ss(rp.growth) },
-        { label: "営業利益率", value: ss(rp.margin) || "—" },
-        { label: "自己資本比率", value: ss(rh.equity_ratio) || "—" },
-        { label: "決算期", value: ss(rp.fiscal_month) || "—" },
-      ];
-      kpis.forEach((kpi, i) => {
-        const x = 0.3 + i * 3.26;
-        slide.addShape("rect", { x, y: yPos, w: 3.1, h: 1.2, fill: { color: "F5F7FA" } });
-        slide.addShape("rect", { x, y: yPos, w: 3.1, h: 0.06, fill: { color: "0068B7" } });
-        slide.addText(kpi.label, { x: x + 0.1, y: yPos + 0.1, w: 2.9, h: 0.3, fontSize: 9, color: "6B7280" });
-        slide.addText(kpi.value, { x: x + 0.1, y: yPos + 0.4, w: 2.9, h: 0.6, fontSize: kpi.value.length > 6 ? 18 : 24, color: "0068B7", bold: true });
-        if (kpi.sub) slide.addText(kpi.sub, { x: x + 0.1, y: yPos + 1.0, w: 2.9, h: 0.18, fontSize: 9, color: "B0B0B0" });
-      });
-
-    } else if (group.label === "戦略・方針") {
-      const rm = getR("mid_term_plan"), rd = getR("dx_strategy"), rs = getR("sustainability");
-      const colW = (W - 0.9) / 3;
-      [[rm, "中期経営計画", 0], [rd, "DX・自動化戦略", 1], [rs, "サステナビリティ", 2]].forEach(([r, label, i]) => {
-        const x = 0.3 + i * (colW + 0.15);
-        slide.addShape("rect", { x, y: yPos, w: colW, h: bodyH, fill: { color: "F5F7FA" } });
-        slide.addShape("rect", { x, y: yPos, w: colW, h: 0.04, fill: { color: "0068B7" } });
-        slide.addText(label, { x: x + 0.1, y: yPos + 0.1, w: colW - 0.2, h: 0.32, fontSize: 11, color: "0068B7", bold: true });
-        if (r.quote) {
-          slide.addShape("rect", { x: x + 0.1, y: yPos + 0.52, w: colW - 0.2, h: 0.8, fill: { color: "FFFFFF" } });
-          slide.addShape("rect", { x: x + 0.1, y: yPos + 0.52, w: 0.04, h: 0.8, fill: { color: "0068B7" } });
-          slide.addText(`"${tr(ss(r.quote), 60)}"`, { x: x + 0.2, y: yPos + 0.56, w: colW - 0.35, h: 0.72, fontSize: 10, color: "0C447C", italic: true, wrap: true });
+      y += 0.1;
+      if (itemId === "pl_summary") {
+        const kpis = [
+          { label: "売上高（最新期）", value: ss2(result?.revenue) || "—", sub: ss2(result?.growth) },
+          { label: "営業利益率", value: ss2(result?.margin) || "—" },
+          { label: "決算期", value: ss2(result?.fiscal_month) || "—" },
+          { label: "物流コスト比率", value: ss2(result?.logistics_cost_ratio) || "要確認" },
+        ];
+        kpis.forEach((kpi, i) => {
+          const x = 0.3 + i * 3.25;
+          slide.addShape("rect", { x, y, w: 3.1, h: 1.1, fill: { color: "F5F7FA" } });
+          slide.addShape("rect", { x, y, w: 3.1, h: 0.05, fill: { color: accentHex } });
+          slide.addText(kpi.label, { x: x + 0.1, y: y + 0.08, w: 2.9, h: 0.3, fontSize: 9, color: "6B7280" });
+          slide.addText(kpi.value, { x: x + 0.1, y: y + 0.38, w: 2.9, h: 0.55, fontSize: kpi.value.length > 8 ? 16 : 22, color: accentHex, bold: true });
+          if (kpi.sub) slide.addText(kpi.sub, { x: x + 0.1, y: y + 0.9, w: 2.9, h: 0.18, fontSize: 9, color: "B0B0B0" });
+        });
+      } else if (itemId === "financial_health") {
+        const eq = parseFloat(ss2(result?.equity_ratio)) || 0;
+        const roe = parseFloat(ss2(result?.roe)) || 0;
+        if (eq > 0) {
+          slide.addText("自己資本比率", { x: 0.3, y, w: 4, h: 0.3, fontSize: 11, color: "6B7280" });
+          slide.addText(`${eq}%`, { x: 4.5, y, w: 2, h: 0.3, fontSize: 18, color: accentHex, bold: true, align: "right" });
+          slide.addShape("rect", { x: 0.3, y: y + 0.35, w: W - 0.6, h: 0.14, fill: { color: "E0E0E0" } });
+          slide.addShape("rect", { x: 0.3, y: y + 0.35, w: Math.min(eq / 100, 1) * (W - 0.6), h: 0.14, fill: { color: accentHex } });
+          y += 0.65;
         }
-        slide.addText(tr(ss(r.summary), 120), { x: x + 0.1, y: yPos + (r.quote ? 1.45 : 0.52), w: colW - 0.2, h: 1.4, fontSize: 10, color: "374151", wrap: true });
-        if (r.status) slide.addText(stLabel(r.status), { x: x + 0.1, y: yPos + bodyH - 0.35, w: colW - 0.2, h: 0.28, fontSize: 9, color: stColor(r.status) });
+        if (roe > 0) {
+          slide.addText("ROE", { x: 0.3, y, w: 4, h: 0.3, fontSize: 11, color: "6B7280" });
+          slide.addText(`${roe}%`, { x: 4.5, y, w: 2, h: 0.3, fontSize: 18, color: accentHex, bold: true, align: "right" });
+          slide.addShape("rect", { x: 0.3, y: y + 0.35, w: W - 0.6, h: 0.14, fill: { color: "E0E0E0" } });
+          slide.addShape("rect", { x: 0.3, y: y + 0.35, w: Math.min(roe / 30, 1) * (W - 0.6), h: 0.14, fill: { color: accentHex } });
+        }
+      }
+      if (result?.detail) {
+        slide.addText(tr(result.detail, 200), { x: 0.3, y: H - 1.5, w: W - 0.6, h: 0.9, fontSize: 11, color: "374151", wrap: true });
+      }
+
+    } else if (itemId === "mid_term_plan") {
+      const kpis = Array.isArray(result?.kpis) ? result.kpis : [];
+      const phases = Array.isArray(result?.phases) ? result.phases : [];
+      const colW = (W - 0.9) / 2;
+      // 左列：計画名・引用・サマリー
+      if (result?.plan_name) {
+        slide.addShape("rect", { x: 0.3, y: bodyY, w: colW, h: 0.5, fill: { color: "E8F4FF" } });
+        slide.addText(`${ss2(result.plan_name)}　${ss2(result?.period)}`, { x: 0.4, y: bodyY + 0.1, w: colW - 0.2, h: 0.3, fontSize: 12, color: accentHex, bold: true });
+      }
+      if (result?.quote) {
+        slide.addShape("rect", { x: 0.3, y: bodyY + 0.6, w: 0.05, h: 0.8, fill: { color: accentHex } });
+        slide.addText(`"${tr(ss2(result.quote), 80)}"`, { x: 0.45, y: bodyY + 0.65, w: colW - 0.3, h: 0.7, fontSize: 11, color: "0C447C", italic: true, wrap: true });
+      }
+      slide.addText(tr(ss2(result?.summary), 150), { x: 0.3, y: bodyY + 1.55, w: colW, h: 1.5, fontSize: 11, color: "374151", wrap: true });
+      // 右列：KPI・フェーズ
+      let ry = bodyY;
+      if (kpis.length > 0) {
+        slide.addText("重点KPI", { x: 0.45 + colW, y: ry, w: colW, h: 0.28, fontSize: 11, color: accentHex, bold: true });
+        ry += 0.32;
+        kpis.slice(0, 4).forEach(k => {
+          slide.addShape("rect", { x: 0.45 + colW, y: ry, w: colW, h: 0.38, fill: { color: "F5F7FA" } });
+          slide.addText(ss2(k.label), { x: 0.55 + colW, y: ry + 0.06, w: colW * 0.6, h: 0.26, fontSize: 10, color: "6B7280" });
+          slide.addText(ss2(k.value), { x: 0.55 + colW + colW * 0.6, y: ry + 0.04, w: colW * 0.38, h: 0.3, fontSize: 13, color: accentHex, bold: true, align: "right" });
+          ry += 0.42;
+        });
+        ry += 0.1;
+      }
+      if (phases.length > 0) {
+        slide.addText("フェーズ別施策", { x: 0.45 + colW, y: ry, w: colW, h: 0.28, fontSize: 11, color: accentHex, bold: true });
+        ry += 0.32;
+        phases.slice(0, 4).forEach((p, i) => {
+          slide.addShape("rect", { x: 0.45 + colW, y: ry, w: 0.1, h: 0.1, fill: { color: i === 0 ? accentHex : "BAD6F0" } });
+          slide.addText(ss2(p.period), { x: 0.65 + colW, y: ry, w: colW - 0.25, h: 0.2, fontSize: 10, color: accentHex });
+          slide.addText(tr(ss2(p.content), 60), { x: 0.65 + colW, y: ry + 0.2, w: colW - 0.25, h: 0.28, fontSize: 10, color: "374151", wrap: true });
+          ry += 0.55;
+        });
+      }
+
+    } else if (itemId === "dx_strategy" || itemId === "sustainability") {
+      const items2 = Array.isArray(result?.initiatives) ? result.initiatives : Array.isArray(result?.targets) ? result.targets : [];
+      const quoteHex = itemId === "sustainability" ? "15803d" : accentHex;
+      const quoteBgHex = itemId === "sustainability" ? "f0fdf4" : "E8F4FF";
+      const colW = (W - 0.9) / 2;
+      if (result?.quote) {
+        slide.addShape("rect", { x: 0.3, y: bodyY, w: colW, h: 0.9, fill: { color: quoteBgHex } });
+        slide.addShape("rect", { x: 0.3, y: bodyY, w: 0.05, h: 0.9, fill: { color: quoteHex } });
+        slide.addText(`"${tr(ss2(result.quote), 100)}"`, { x: 0.45, y: bodyY + 0.1, w: colW - 0.25, h: 0.7, fontSize: 11, color: quoteHex, italic: true, wrap: true });
+      }
+      slide.addText(tr(ss2(result?.summary), 200), { x: 0.3, y: bodyY + (result?.quote ? 1.0 : 0), w: colW, h: 2.0, fontSize: 12, color: "374151", wrap: true });
+      if (items2.length > 0) {
+        let ry = bodyY;
+        slide.addText(itemId === "dx_strategy" ? "主要施策" : "目標・コミットメント", { x: 0.45 + colW, y: ry, w: colW, h: 0.28, fontSize: 11, color: accentHex, bold: true });
+        ry += 0.32;
+        items2.slice(0, 6).forEach(it => {
+          slide.addShape("rect", { x: 0.45 + colW, y: ry, w: colW, h: 0.48, fill: { color: "F5F7FA" } });
+          slide.addShape("rect", { x: 0.45 + colW, y: ry, w: 0.04, h: 0.48, fill: { color: accentHex } });
+          slide.addText(tr(ss2(it.label || it.name || ""), 40), { x: 0.55 + colW, y: ry + 0.06, w: colW * 0.65, h: 0.28, fontSize: 11, color: "1A1A1A" });
+          if (it.status || it.value) slide.addText(ss2(it.status || it.value), { x: 0.55 + colW + colW * 0.65, y: ry + 0.1, w: colW * 0.3, h: 0.28, fontSize: 10, color: accentHex, align: "right" });
+          ry += 0.52;
+        });
+      }
+
+    } else if (itemId === "logistics_flow") {
+      const steps = Array.isArray(result?.steps) ? result.steps : [];
+      if (steps.length > 0) {
+        const stepW = (W - 0.8 - (steps.length - 1) * 0.2) / steps.length;
+        steps.forEach((s, i) => {
+          const x = 0.3 + i * (stepW + 0.2);
+          slide.addShape("rect", { x, y: bodyY, w: stepW, h: 1.4, fill: { color: i === 0 ? "E8F4FF" : "F5F7FA" }, line: i === 0 ? { color: accentHex, width: 1 } : undefined });
+          slide.addText(ss2(s.label), { x: x + 0.1, y: bodyY + 0.3, w: stepW - 0.2, h: 0.4, fontSize: 13, color: "1A1A1A", bold: true, align: "center" });
+          slide.addText(tr(ss2(s.detail), 40), { x: x + 0.1, y: bodyY + 0.75, w: stepW - 0.2, h: 0.55, fontSize: 10, color: "6B7280", align: "center", wrap: true });
+          if (i < steps.length - 1) {
+            slide.addShape("rect", { x: x + stepW + 0.02, y: bodyY + 0.65, w: 0.16, h: 0.1, fill: { color: accentHex } });
+          }
+        });
+      }
+      slide.addText(tr(ss2(result?.summary), 250), { x: 0.3, y: bodyY + 1.6, w: W - 0.6, h: 1.5, fontSize: 12, color: "374151", wrap: true });
+
+    } else if (itemId === "recent_news") {
+      const news = Array.isArray(result?.news) ? result.news : [];
+      let ny = bodyY;
+      news.slice(0, 5).forEach(n => {
+        slide.addShape("rect", { x: 0.3, y: ny, w: W - 0.6, h: 0.7, fill: { color: "F5F7FA" } });
+        slide.addShape("rect", { x: 0.3, y: ny, w: 0.9, h: 0.7, fill: { color: accentHex } });
+        slide.addText(ss2(n.date), { x: 0.32, y: ny + 0.2, w: 0.86, h: 0.3, fontSize: 10, color: "FFFFFF", align: "center" });
+        slide.addText(tr(ss2(n.title), 70), { x: 1.3, y: ny + 0.12, w: W - 1.7, h: 0.3, fontSize: 12, color: "1A1A1A", bold: true });
+        if (n.detail) slide.addText(tr(ss2(n.detail), 80), { x: 1.3, y: ny + 0.42, w: W - 1.7, h: 0.22, fontSize: 10, color: "6B7280" });
+        ny += 0.76;
       });
 
     } else {
-      // その他グループ共通
-      groupIds.forEach((id, i) => {
-        const r = getR(id);
-        const item = ALL_ITEMS.find(it => it.id === id);
-        const cardH = Math.min(bodyH / groupIds.length - 0.1, 1.6);
-        const y = yPos + i * (cardH + 0.1);
-        slide.addShape("rect", { x: 0.3, y, w: 0.05, h: cardH, fill: { color: "0068B7" } });
-        slide.addText(item?.label || id, { x: 0.5, y: y + 0.05, w: 5, h: 0.3, fontSize: 11, color: "1A1A1A", bold: true });
-        if (r.status) slide.addText(stLabel(r.status), { x: 8.5, y: y + 0.05, w: 2, h: 0.3, fontSize: 10, color: stColor(r.status), align: "right" });
-        slide.addText(tr(ss(r.summary), 200), { x: 0.5, y: y + 0.4, w: W - 0.8, h: cardH - 0.5, fontSize: 10, color: "374151", wrap: true });
-      });
+      // デフォルト：サマリー＋構造化データ
+      slide.addText(tr(ss2(result?.summary), 300), { x: 0.3, y: bodyY, w: W - 0.6, h: 2.0, fontSize: 13, color: "374151", wrap: true });
+      if (result?.missing && result?.status !== "confirmed") {
+        slide.addShape("rect", { x: 0.3, y: bodyY + 2.1, w: W - 0.6, h: 0.6, fill: { color: "fef9c3" } });
+        slide.addShape("rect", { x: 0.3, y: bodyY + 2.1, w: 0.05, h: 0.6, fill: { color: "d97706" } });
+        slide.addText(`△ ${tr(ss2(result.missing), 150)}`, { x: 0.45, y: bodyY + 2.2, w: W - 0.8, h: 0.4, fontSize: 11, color: "a16207", wrap: true });
+      }
     }
-    pageNum++;
-  }
-
-  // ヒアリングシート
-  if (unconfirmedIds.length > 0) {
-    const slide = prs.addSlide();
-    slide.background = { color: "FFFFFF" };
-    addHeader(slide, "ヒアリングシート — 初回訪問で確認", "Hearing Sheet");
-    addFooter(slide, pageNum, totalSlides);
-    let yp = 1.55;
-    unconfirmedIds.slice(0, 8).forEach(id => {
-      const r = getR(id); const item = ALL_ITEMS.find(i => i.id === id);
-      slide.addShape("rect", { x: 0.3, y: yp, w: 0.05, h: 0.5, fill: { color: "dc2626" } });
-      slide.addText(item?.label || id, { x: 0.5, y: yp + 0.02, w: 3, h: 0.24, fontSize: 11, color: "1A1A1A", bold: true });
-      slide.addText(tr(ss(r.missing) || "訪問時に確認", 100), { x: 0.5, y: yp + 0.26, w: W - 0.8, h: 0.22, fontSize: 10, color: "4b5563" });
-      yp += 0.62;
-    });
-  }
+  });
 
   await prs.writeFile({ fileName: `SBR_リサーチ_${company}_${today}.pptx` });
 }
@@ -855,7 +1054,9 @@ function SlidePreview({ company, dept, results, pptStyle, selectedIds }) {
   const [generating, setGenerating] = useState(false);
   const iframeRef = useRef(null);
   const blobUrlRef = useRef(null);
-  const [totalSlides, setTotalSlides] = useState(1);
+
+  const activeIds = REPORT_ORDER.filter(id => selectedIds.has(id) && results[id]);
+  const totalSlides = 1 + activeIds.length;
 
   useEffect(() => {
     const html = buildSlideHTML(company, dept, results, pptStyle, selectedIds);
@@ -863,27 +1064,10 @@ function SlidePreview({ company, dept, results, pptStyle, selectedIds }) {
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     blobUrlRef.current = url;
-
-    // スライド数を計算
-    const groups = [
-      ["company_overview", "business_products"],
-      ["pl_summary", "growth_profit", "financial_health"],
-      ["mid_term_plan", "dx_strategy", "sustainability"],
-      ["logistics_flow", "product_features", "existing_systems"],
-      ["org_structure", "market_share", "group_structure", "bases_network", "recent_news"],
-    ];
-    const activeGroups = groups.filter(g => g.some(id => selectedIds.has(id) && results[id])).length;
-    const hasUnconfirmed = REPORT_ORDER.some(id => selectedIds.has(id) && results[id]?.status === "unconfirmed");
-    const total = 1 + activeGroups + (hasUnconfirmed ? 1 : 0);
-    setTotalSlides(total);
-
-    if (iframeRef.current) {
-      iframeRef.current.src = url;
-    }
+    if (iframeRef.current) iframeRef.current.src = url;
     return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); };
   }, [company, dept, results, pptStyle, selectedIds]);
 
-  // スライドスクロール
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -892,9 +1076,7 @@ function SlidePreview({ company, dept, results, pptStyle, selectedIds }) {
         const doc = iframe.contentDocument;
         if (!doc) return;
         const slides = doc.querySelectorAll(".slide");
-        if (slides[currentSlide]) {
-          slides[currentSlide].scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+        if (slides[currentSlide]) slides[currentSlide].scrollIntoView({ behavior: "smooth", block: "start" });
       } catch (_) {}
     };
     iframe.addEventListener("load", scrollToSlide);
@@ -905,26 +1087,21 @@ function SlidePreview({ company, dept, results, pptStyle, selectedIds }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div style={{ flex: 1, overflow: "hidden", background: "#E8E8E8" }}>
-        <iframe
-          ref={iframeRef}
-          style={{ width: "100%", height: "100%", border: "none", display: "block" }}
-          sandbox="allow-same-origin allow-popups"
-          title="スライドプレビュー"
-        />
+        <iframe ref={iframeRef} style={{ width: "100%", height: "100%", border: "none", display: "block" }} sandbox="allow-same-origin allow-popups" title="スライドプレビュー" />
       </div>
       <div style={{ padding: "10px 16px", background: C.white, borderTop: `1px solid ${C.gray200}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexShrink: 0 }}>
         <button onClick={() => setCurrentSlide(s => Math.max(0, s - 1))} disabled={currentSlide === 0}
           style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.gray200}`, background: currentSlide === 0 ? C.gray50 : C.white, cursor: currentSlide === 0 ? "not-allowed" : "pointer", fontSize: 12, color: currentSlide === 0 ? C.gray400 : C.black, fontFamily: "inherit" }}>
           ← 前へ
         </button>
-        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", maxWidth: 500, justifyContent: "center" }}>
           {Array.from({ length: totalSlides }).map((_, i) => (
             <div key={i} onClick={() => setCurrentSlide(i)}
-              style={{ width: i === currentSlide ? 18 : 7, height: 7, borderRadius: 99, background: i === currentSlide ? C.blue : C.gray200, cursor: "pointer", transition: "all 0.2s" }} />
+              style={{ width: i === currentSlide ? 16 : 6, height: 6, borderRadius: 99, background: i === currentSlide ? C.blue : C.gray200, cursor: "pointer", transition: "all 0.2s", flexShrink: 0 }} />
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: C.gray600 }}>{currentSlide + 1} / {totalSlides}</span>
+          <span style={{ fontSize: 11, color: C.gray600, whiteSpace: "nowrap" }}>{currentSlide + 1} / {totalSlides}</span>
           <button onClick={() => setCurrentSlide(s => Math.min(totalSlides - 1, s + 1))} disabled={currentSlide === totalSlides - 1}
             style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.gray200}`, background: currentSlide === totalSlides - 1 ? C.gray50 : C.white, cursor: currentSlide === totalSlides - 1 ? "not-allowed" : "pointer", fontSize: 12, color: currentSlide === totalSlides - 1 ? C.gray400 : C.black, fontFamily: "inherit" }}>
             次へ →
@@ -964,11 +1141,11 @@ function WarehouseProgress({ done, total, current }) {
       <svg viewBox="0 0 300 82" width="100%" style={{ display: "block", background: C.gray100, borderRadius: 8 }}>
         <rect x="0" y="65" width="300" height="17" fill={C.gray200} /><rect x="0" y="63" width="300" height="3" fill={C.gray200} />
         <rect x="8" y="50" width="120" height="14" rx="3" fill="#334155" />
-        <clipPath id="wbc8"><rect x="8" y="50" width="120" height="14" /></clipPath>
-        <g clipPath="url(#wbc8)">{Array.from({ length: 9 }).map((_, i) => <line key={i} x1={8 + ((i * 16 - beltOffset + 120) % 120)} y1="50" x2={8 + ((i * 16 - beltOffset + 120) % 120)} y2="64" stroke="#475569" strokeWidth="1.5" />)}</g>
+        <clipPath id="wbc9"><rect x="8" y="50" width="120" height="14" /></clipPath>
+        <g clipPath="url(#wbc9)">{Array.from({ length: 9 }).map((_, i) => <line key={i} x1={8 + ((i * 16 - beltOffset + 120) % 120)} y1="50" x2={8 + ((i * 16 - beltOffset + 120) % 120)} y2="64" stroke="#475569" strokeWidth="1.5" />)}</g>
         <rect x="8" y="50" width="120" height="14" rx="3" fill="none" stroke="#475569" strokeWidth="1" />
         <circle cx="11" cy="57" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" /><circle cx="125" cy="57" r="5" fill="#1e293b" stroke="#475569" strokeWidth="1" />
-        {boxOnConv && <g><rect x={boxConvX} y="40" width="16" height="12" rx="2" fill={C.blue} stroke={C.blueDark} strokeWidth="0.8" /><line x1={boxConvX + 2} y1="44" x2={boxConvX + 14} y2="44" stroke="#FFFFFF" strokeWidth="0.8" opacity="0.5" /></g>}
+        {boxOnConv && <g><rect x={boxConvX} y="40" width="16" height="12" rx="2" fill={C.blue} stroke={C.blueDark} strokeWidth="0.8" /></g>}
         <g transform="translate(145,8)">
           <rect x="-10" y="0" width="20" height="5" rx="2" fill="#475569" /><rect x="-4" y="-3" width="8" height="5" rx="1" fill="#64748b" />
           <rect x="-3" y="4" width="6" height={20 + armDown * 16} rx="2" fill="#334155" />
@@ -1104,7 +1281,6 @@ function ResultCardVisual({ item, result, onRetry, retrying }) {
   const cfg = STATUS[st];
   const sourceUrls = result?.source_url && typeof result.source_url === "string" ? result.source_url.split(",").map(u => u.trim()).filter(u => u.startsWith("http")) : [];
   const isFinance = ["pl_summary", "growth_profit", "financial_health"].includes(item.id);
-
   return (
     <div style={{ borderRadius: 10, marginBottom: 10, overflow: "hidden", background: C.white, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", border: `1px solid ${C.gray200}` }}>
       <div onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", background: C.gray50, borderBottom: open ? `1px solid ${C.gray200}` : "none" }}>
@@ -1147,9 +1323,7 @@ function ResultCardVisual({ item, result, onRetry, retrying }) {
           )}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-              {sourceUrls.length > 0 && (
-                <>{sourceUrls.map((url, i) => { let host = url; try { host = new URL(url).hostname; } catch { } return (<a key={i} href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: C.blue, textDecoration: "none" }}>📎 {host}</a>); })}</>
-              )}
+              {sourceUrls.map((url, i) => { let host = url; try { host = new URL(url).hostname; } catch { } return (<a key={i} href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: C.blue, textDecoration: "none" }}>📎 {host}</a>); })}
             </div>
             <button onClick={onRetry} disabled={retrying} style={{ padding: "4px 10px", fontSize: 10, fontWeight: 600, fontFamily: "inherit", background: retrying ? C.gray100 : C.white, color: retrying ? C.gray400 : C.blue, border: `1px solid ${retrying ? C.gray200 : C.blue}`, borderRadius: 6, cursor: retrying ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
               {retrying ? "調査中..." : "🔍 追加調査"}
@@ -1180,12 +1354,6 @@ function ResultCardText({ item, result, onRetry, retrying }) {
             <>
               <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, color: C.black, lineHeight: 1.7 }}>{safeStr(result.summary)}</p>
               <p style={{ margin: "0 0 8px", fontSize: 12, color: C.gray800, lineHeight: 1.85 }}>{safeStr(result.detail)}</p>
-              {(result.fiscal_month || result.logistics_cost_ratio) && (
-                <p style={{ margin: "0 0 8px", fontSize: 11, color: C.gray600 }}>
-                  {result.fiscal_month && `決算期：${safeStr(result.fiscal_month)}　`}
-                  {result.logistics_cost_ratio && `物流コスト比率：${safeStr(result.logistics_cost_ratio)}`}
-                </p>
-              )}
             </>
           ) : (
             <p style={{ margin: "0 0 8px", fontSize: 12, color: C.gray800, lineHeight: 1.85 }}>{safeStr(result?.summary) || "情報を取得できませんでした。"}</p>
@@ -1296,7 +1464,26 @@ export default function App() {
       const base = itemId === "market_share" ? PROMPTS.market_share(company, industry) : (PROMPTS[itemId]?.(company) || `"${company}"について「${item?.label}」を調査。${FACT_ONLY} JSONのみ: {"summary":"3文以内","status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`);
       const raw = await retryResearch(company, itemId, base, industry, hint);
       const parsed = extractJSON(raw);
-      if (parsed) { setResults(prev => ({ ...prev, [itemId]: parsed })); }
+      if (parsed) {
+        setResults(prev => {
+          const current = prev[itemId];
+          const rank = { confirmed: 3, partial: 2, unconfirmed: 1 };
+          const currentRank = rank[current?.status] || 0;
+          const newRank = rank[parsed?.status] || 0;
+          if (newRank >= currentRank) {
+            return { ...prev, [itemId]: parsed };
+          } else {
+            return {
+              ...prev,
+              [itemId]: {
+                ...current,
+                summary: current?.summary && current.summary !== "取得できませんでした。" ? current.summary : parsed.summary,
+                source_url: current?.source_url || parsed.source_url,
+              }
+            };
+          }
+        });
+      }
     } catch (_) {}
     setRetryingIds(s => { const n = new Set(s); n.delete(itemId); return n; });
   };
@@ -1460,7 +1647,7 @@ export default function App() {
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.gray200 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🔍</div>
               <div style={{ fontSize: 15, fontWeight: 600, color: C.gray400 }}>顧客名を入力してリサーチ開始</div>
-              <div style={{ fontSize: 12, marginTop: 6, color: C.gray400 }}>調査項目を選んでAIが自動でWeb検索・分析します</div>
+              <div style={{ fontSize: 12, marginTop: 6, color: C.gray400 }}>1項目 = 1スライドで出力されます</div>
             </div>
           ) : (
             <>
@@ -1510,11 +1697,7 @@ export default function App() {
                       <div style={{ marginBottom: 16 }}>
                         {confirmedResults.map(id => {
                           const item = ALL_ITEMS.find(i => i.id === id);
-                          return item ? (
-                            <ResultCard key={id} item={item} result={results[id]}
-                              onRetry={() => setRetryModal({ itemId: id, item })}
-                              retrying={retryingIds.has(id)} />
-                          ) : null;
+                          return item ? <ResultCard key={id} item={item} result={results[id]} onRetry={() => setRetryModal({ itemId: id, item })} retrying={retryingIds.has(id)} /> : null;
                         })}
                       </div>
                     )}
@@ -1522,7 +1705,7 @@ export default function App() {
                     {unconfirmedResults.length > 0 && (
                       <div style={{ background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: 10, padding: "12px 16px" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: C.red }}>⚠️ 確認できなかった情報（{unconfirmedResults.length}件）— 初回訪問で確認</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.red }}>⚠️ 確認できなかった情報（{unconfirmedResults.length}件）</div>
                           <button onClick={handleBulkRetry} disabled={bulkRetrying || retryingIds.size > 0}
                             style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, fontFamily: "inherit", background: (bulkRetrying || retryingIds.size > 0) ? C.gray100 : C.white, color: (bulkRetrying || retryingIds.size > 0) ? C.gray400 : C.red, border: `1px solid ${(bulkRetrying || retryingIds.size > 0) ? C.gray200 : C.red}`, borderRadius: 6, cursor: (bulkRetrying || retryingIds.size > 0) ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
                             {bulkRetrying ? "再調査中..." : "⟳ まとめて再調査"}
