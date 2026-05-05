@@ -227,12 +227,12 @@ function extractJSON(text) {
   return null;
 }
 
-// ★ 企業名正規化
+// ★ 企業名正規化（web検索不要、知識ベースで十分）
 async function normalizeCompanyName(company) {
   try {
-    const raw = await callClaude(
-      `あなたは日本企業名の正規化AIです。JSONのみ返答。`,
-      `企業名「${company}」について調査し、正式な情報を返してください。JSONのみ: {"formal":"正式社名（株式会社含む）","english":"英語社名","aliases":["別名1","別名2"],"domain":"公式ドメイン（例:subaru.co.jp）"}`
+    const raw = await callClaudeNoSearch(
+      `あなたは日本企業名の正規化AIです。JSONのみ返答。前置き不要。`,
+      `企業名「${company}」の正式社名・英語名・公式ドメインを返してください。略称・英語名・カタカナ表記など表記ゆれがあれば全てaliasesに含めてください。JSONのみ: {"formal":"正式社名（株式会社含む）","english":"英語社名","aliases":["別名1","別名2"],"domain":"公式ドメイン（例:subaru.co.jp）"}`
     );
     const parsed = extractJSON(raw);
     return parsed || { formal: company, english: company, aliases: [company], domain: null };
