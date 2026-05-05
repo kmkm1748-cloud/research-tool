@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from "react";
 import PptxGenJS from "pptxgenjs";
 
@@ -82,6 +81,9 @@ const TOOLTIPS = {
 };
 
 const FACT_ONLY = "公開情報・報道・公式サイトで確認できた事実のみ記載。推測・類推・一般論は禁止。不明な場合はstatusをunconfirmedにして空白にする。";
+
+// トークン数を多く必要とする項目
+const HIGH_TOKEN_ITEMS = new Set(["recent_news", "mid_term_plan", "group_structure", "sustainability", "dx_strategy"]);
 
 function safeStr(v) {
   if (v === null || v === undefined) return "";
@@ -192,8 +194,9 @@ const PROMPTS = {
   recent_news: (c) => `"${c}"の直近1年のニュース・IR・プレスリリース。日付付きで列挙。${FACT_ONLY} JSONのみ: {"summary":"3文以内","news":[{"date":"yyyy/mm","title":"タイトル","detail":"詳細","url":"記事URL（あれば）"}],"status":"confirmed|partial|unconfirmed","missing":"訪問時確認事項","source_url":"参照URL"}`,
 };
 
-async function callClaudeNoSearch(system, user) {
-  const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, system, messages: [{ role: "user", content: user }] }) });
+// ★修正①：maxTokens引数を追加
+async function callClaudeNoSearch(system, user, maxTokens = 1500) {
+  const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }) });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
   return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
@@ -223,6 +226,7 @@ function extractJSON(text) {
   return null;
 }
 
+// ★修正②：itemIdを引数に追加し、HIGH_TOKEN_ITEMSで分岐
 async function deepResearchPremium(company, itemId, prompt, industry) {
   const collectedTexts = [], collectedUrls = [];
   const domain = guessDomain(company);
@@ -255,9 +259,11 @@ async function deepResearchPremium(company, itemId, prompt, industry) {
   const allInfo = collectedTexts.join("\n\n---\n\n");
   const sourceUrls = [...new Set(collectedUrls)].slice(0, 3).join(", ");
   const finalPrompt = allInfo.length > 200 ? `${prompt}\n\n以下は複数の公式情報源から収集した情報です。source_urlには「${sourceUrls}」を記載してください：\n\n${allInfo.slice(0, 8000)}` : `${prompt}\n\nsource_urlには参照したURLを記載してください。情報が見つからない場合はstatusをunconfirmedにしてください。`;
-  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。収集した複数の公式情報源を総合分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測・類推・一般論は一切書かない - 財務項目は結論を先に述べ根拠数値を明記する - 数値データは必ず数値型で返す（文字列不可）- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載 - missingには「訪問時に直接確認すべき具体的な質問」を書く - source_urlには実際に参照したURLを記載する - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt);
+  const maxTokens = HIGH_TOKEN_ITEMS.has(itemId) ? 3000 : 1500;
+  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。収集した複数の公式情報源を総合分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測・類推・一般論は一切書かない - 財務項目は結論を先に述べ根拠数値を明記する - 数値データは必ず数値型で返す（文字列不可）- 情報が見つからない場合はstatusをunconfirmedにし「公開情報なし」と記載 - missingには「訪問時に直接確認すべき具体的な質問」を書く - source_urlには実際に参照したURLを記載する - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt, maxTokens);
 }
 
+// ★修正③：retryResearchも同様にmaxTokens分岐
 async function retryResearch(company, itemId, prompt, industry, hint = "") {
   const collectedTexts = [], collectedUrls = [];
   const queries = RETRY_QUERIES[itemId]?.(company, hint) || [`${company} ${itemId} ${hint}`];
@@ -280,7 +286,8 @@ async function retryResearch(company, itemId, prompt, industry, hint = "") {
   const sourceUrls = [...new Set(collectedUrls)].slice(0, 3).join(", ");
   const hintText = hint ? `\n\nユーザーからの追加指示：「${hint}」この点を特に重視してください。` : "";
   const finalPrompt = allInfo.length > 200 ? `${prompt}${hintText}\n\n以下は再調査で収集した情報です。source_urlには「${sourceUrls}」を記載してください：\n\n${allInfo.slice(0, 8000)}` : `${prompt}${hintText}`;
-  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。再調査で収集した情報を分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測は禁止 - 財務項目は結論を先に根拠数値を明記 - 数値データは数値型で返す - source_urlには実際に参照したURLを記載 - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt);
+  const maxTokens = HIGH_TOKEN_ITEMS.has(itemId) ? 3000 : 1500;
+  return await callClaudeNoSearch(`あなたはB2B営業支援AIです。再調査で収集した情報を分析し、JSONのみ返答。【厳守ルール】- 収集した公式情報に記載された事実のみ記載する - 推測は禁止 - 財務項目は結論を先に根拠数値を明記 - 数値データは数値型で返す - source_urlには実際に参照したURLを記載 - 前置き・マークダウン不要。JSONのみ返答。`, finalPrompt, maxTokens);
 }
 
 // 1項目1スライドのHTML生成
